@@ -1,5 +1,7 @@
 # Triển khai từ GitHub và giữ đầy đủ tính năng
 
+**Muốn dùng hoàn toàn miễn phí:** làm theo [GitHub + PythonAnywhere Beginner](DEPLOY_FREE.md). Dự án đã có adapter WSGI cho gói này; giữ Flask, JSON và ảnh riêng. Các mục Render dưới đây là lựa chọn trả phí, không phải bước bắt buộc của phương án miễn phí.
+
 Mã nguồn đã được sửa trực tiếp trong dự án. Các bước dưới đây là hướng dẫn để chủ repository triển khai; chưa có dịch vụ bên ngoài nào được tạo, chưa push và chưa thay đổi website đang chạy.
 
 ## 1. Môi trường đã xác định

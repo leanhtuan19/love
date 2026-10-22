@@ -216,12 +216,17 @@ class LetterStore:
 
 
 class AuthStore:
-    def __init__(self, directory, override_hash=None):
+    def __init__(self, directory, override_hash=None, journal_mode="WAL"):
+        if not isinstance(journal_mode, str) or journal_mode.upper() not in {"WAL", "DELETE"}:
+            raise ValueError("LOVEDAYS_SQLITE_JOURNAL_MODE must be WAL or DELETE")
+        journal_mode = journal_mode.upper()
         self.path = directory / "auth.sqlite3"
         self.override_hash = override_hash
         with self.connection() as db:
+            # WAL requires local shared memory. Network-backed hosts such as
+            # PythonAnywhere need SQLite's rollback journal instead.
+            db.execute(f"PRAGMA journal_mode={journal_mode}")
             db.executescript("""
-                PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS browsers (id TEXT PRIMARY KEY, csrf TEXT NOT NULL, created REAL NOT NULL, seen REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, browser_id TEXT NOT NULL, created REAL NOT NULL, seen REAL NOT NULL, version TEXT NOT NULL);
@@ -318,6 +323,7 @@ def create_app(test_config=None):
     app.config.from_mapping(
         DATA_DIR=os.environ.get("LOVEDAYS_DATA_DIR", str(Path.home() / ".lovedays-private" / workspace_key)),
         PASSWORD_HASH=os.environ.get("LOVEDAYS_PASSWORD_HASH"),
+        SQLITE_JOURNAL_MODE=os.environ.get("LOVEDAYS_SQLITE_JOURNAL_MODE", "WAL"),
         COOKIE_SECURE=os.environ.get("LOVEDAYS_COOKIE_SECURE", "").lower() in ("1", "true", "yes"),
         PUBLIC_ORIGIN=os.environ.get("LOVEDAYS_PUBLIC_ORIGIN") or os.environ.get("RENDER_EXTERNAL_URL"),
         SESSION_TTL_SECONDS=1800, LOGIN_WINDOW_SECONDS=900, MAX_LOGIN_FAILURES=6,
@@ -339,7 +345,7 @@ def create_app(test_config=None):
             raise ValueError("Private signing key is invalid; do not replace it silently")
     signer = URLSafeTimedSerializer(secret, salt="lovedays-private-v1")
     store = LetterStore(data_dir)
-    auth = AuthStore(data_dir, app.config["PASSWORD_HASH"])
+    auth = AuthStore(data_dir, app.config["PASSWORD_HASH"], app.config["SQLITE_JOURNAL_MODE"])
     app.extensions.update(letter_store=store, auth_store=auth)
 
     def now():

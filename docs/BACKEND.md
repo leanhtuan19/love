@@ -23,9 +23,9 @@ Dùng Python 3.10 trở lên khi triển khai mới. Bản đã được kiểm 
 
 ~~~powershell
 python -m venv .venv
-..venvScriptspython.exe -m pip install -r requirements.txt
-..venvScriptspython.exe server.py init-password
-..venvScriptspython.exe server.py serve --host 127.0.0.1 --port 8001
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe server.py init-password
+.\.venv\Scripts\python.exe server.py serve --host 127.0.0.1 --port 8001
 ~~~
 
 Linux/macOS thay đường dẫn Python của môi trường ảo bằng .venv/bin/python. CLI hỏi mật khẩu và xác nhận bằng getpass; dữ liệu nhập không hiện ra màn hình. Chọn mật khẩu từ 8 đến 256 ký tự.
@@ -149,6 +149,8 @@ Không bật Secure cookie cho bản thử HTTP localhost, vì trình duyệt c�
 Backend mặc định không tin X-Forwarded-For do client gửi. Với reverse proxy, giới hạn IP có thể được dùng chung cho những người đi qua proxy; nếu mở rộng nhiều người dùng, cấu hình proxy tin cậy có kiểm soát trước khi tách IP thực. Không bật CORS cho nguồn tùy ý.
 
 GitHub Pages hoặc hosting chỉ phục vụ HTML không chạy được backend này. Cần máy chủ/dịch vụ có Python và dung lượng ghi bền cho kho riêng. Thiết lập dịch vụ khởi động lại sau reboot và sao lưu kho; không dùng filesystem tạm của một container không có volume. Cấu hình GitHub/Pages/Render/Vercel phù hợp với repository hiện tại có tại [DEPLOYMENT.md](DEPLOYMENT.md). Render tự cung cấp RENDER_EXTERNAL_URL để backend kiểm tra origin; LOVEDAYS_PUBLIC_ORIGIN được ưu tiên nếu có tên miền riêng.
+
+Phương án miễn phí giữ nguyên backend: [PythonAnywhere Beginner](DEPLOY_FREE.md). Dùng pythonanywhere_wsgi.py và đặt LOVEDAYS_SQLITE_JOURNAL_MODE=DELETE khi chạy CLI trên PythonAnywhere; adapter đặt chế độ này mặc định cho Web app. Môi trường khác vẫn mặc định WAL. Giữ CLI và WSGI cùng đường dẫn dự án/kho dữ liệu.
 
 ## Kiểm tra
 

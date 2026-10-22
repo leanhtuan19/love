@@ -1,5 +1,9 @@
 # Báo cáo kiểm thử
 
+## Bổ sung triển khai PythonAnywhere miễn phí
+
+Sau khi thêm adapter WSGI và cấu hình SQLite journal, đã chạy `python -m unittest discover -s tests -p test_pythonanywhere.py -v`: 3/3 đạt; chạy lại `test_backend.py`: 23/23 đạt. Kiểm tra mới dùng app thật và kho tạm ngoài dự án: HTTPS/Secure cookie, CSRF/origin, đăng nhập, CRUD, đọc từ thiết bị khác, dữ liệu sau tạo lại app, kho mặc định dùng chung với CLI, SQLite DELETE, origin EU và từ chối journal mode không hỗ trợ. Không dùng mật khẩu/dữ liệu thật. Chưa deploy hoặc chạy thử network filesystem/HTTPS/upload trên tài khoản PythonAnywhere; browser suites không chạy lại vì frontend không đổi trong phần bổ sung này.
+
 Đợt tích hợp trước đã chạy 41 bài kiểm tra tự động: 23 backend, 7 tích hợp trình duyệt, 8 thao tác pointer/mobile, 3 build artifact; tất cả đạt. Sau khi sửa lỗi nhấn nút tim không mở thư, đã chạy lại toàn bộ nhóm pointer/mobile được cập nhật: 9/9 đạt. Các nhóm còn lại không chạy lại trong bản sửa này. Chưa triển khai lên tài khoản GitHub Pages, Render hoặc Vercel.
 
 ## Môi trường
