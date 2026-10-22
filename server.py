@@ -49,9 +49,16 @@ MAX_IMAGE_PIXELS = 12_000_000
 LIMITS = {"maxImages": MAX_IMAGES, "maxImageBytes": MAX_IMAGE_BYTES,
           "maxTitleLength": 160, "maxContentLength": 20000, "maxNameLength": 80}
 PUBLIC_FILES = {
-    "index.html", "style.css", "app.js", "profiles.js", "scroll.js",
-    "loading.js", "effects.css", "letters.js", "letters.css",
+    "index.html", "main/css/style.css", "main/css/effects.css", "main/css/letters.css",
+    "main/js/app.js", "main/js/profiles.js", "main/js/scroll.js",
+    "main/js/loading.js", "main/js/letters.js", "main/js/mobile.js",
     "fonts/Lora-Variable.ttf", "fonts/OFL-Lora.txt",
+}
+PUBLIC_ALIASES = {
+    "style.css": "main/css/style.css", "effects.css": "main/css/effects.css",
+    "letters.css": "main/css/letters.css", "app.js": "main/js/app.js",
+    "profiles.js": "main/js/profiles.js", "scroll.js": "main/js/scroll.js",
+    "loading.js": "main/js/loading.js", "letters.js": "main/js/letters.js",
 }
 IMAGE_FORMATS = {"JPEG": ("image/jpeg", ".jpg"), "PNG": ("image/png", ".png"),
                  "WEBP": ("image/webp", ".webp")}
@@ -312,7 +319,7 @@ def create_app(test_config=None):
         DATA_DIR=os.environ.get("LOVEDAYS_DATA_DIR", str(Path.home() / ".lovedays-private" / workspace_key)),
         PASSWORD_HASH=os.environ.get("LOVEDAYS_PASSWORD_HASH"),
         COOKIE_SECURE=os.environ.get("LOVEDAYS_COOKIE_SECURE", "").lower() in ("1", "true", "yes"),
-        PUBLIC_ORIGIN=os.environ.get("LOVEDAYS_PUBLIC_ORIGIN"),
+        PUBLIC_ORIGIN=os.environ.get("LOVEDAYS_PUBLIC_ORIGIN") or os.environ.get("RENDER_EXTERNAL_URL"),
         SESSION_TTL_SECONDS=1800, LOGIN_WINDOW_SECONDS=900, MAX_LOGIN_FAILURES=6,
         TIME_PROVIDER=time.time, MAX_CONTENT_LENGTH=MAX_IMAGES * MAX_IMAGE_BYTES + 512 * 1024,
         MAX_FORM_MEMORY_SIZE=128 * 1024, MAX_FORM_PARTS=12,
@@ -660,16 +667,20 @@ def create_app(test_config=None):
     def public_file(resource="index.html"):
         if any(character in resource for character in ("\\", "\x00", ":")) or any(part in ("..", ".", "") for part in resource.split("/")):
             raise ApiError(404, "not_found", "Không tìm thấy trang.")
+        # Keep previously published script/style URLs working after the asset move.
+        resource = PUBLIC_ALIASES.get(resource, resource)
         relative = Path(resource)
         allowed = resource in PUBLIC_FILES
-        if relative.parts and relative.parts[0] == "img":
+        if relative.parts[:2] == ("main", "img"):
             allowed = relative.suffix.lower() in {".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico"}
-        elif relative.parts and relative.parts[0] == "music":
+        elif relative.parts[:2] == ("main", "music"):
             allowed = relative.suffix.lower() in {".mp3", ".ogg", ".wav"}
         path = (ROOT / relative).resolve()
         if not allowed or ROOT not in path.parents or not path.is_file():
             raise ApiError(404, "not_found", "Không tìm thấy trang.")
-        return send_file(path, max_age=0)
+        # Windows installations may not register .ttf in the system MIME database.
+        mimetype = "font/ttf" if relative.suffix.lower() == ".ttf" else None
+        return send_file(path, mimetype=mimetype, max_age=0)
 
     return app
 

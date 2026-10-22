@@ -13,6 +13,9 @@
 html { min-width: 280px; min-height: 100%; scroll-behavior: smooth; scrollbar-color: #d895ac #fff4f6; scrollbar-width: thin; }
 html.is-smooth-scrolling { scroll-behavior: auto; }
 body {
+  /* Permit vertical and horizontal scrolling, without double-tap/pinch zoom.
+     Browser accessibility settings can still override this preference. */
+  touch-action: pan-x pan-y;
   margin: 0;
   min-height: 100vh;
   min-height: 100svh;

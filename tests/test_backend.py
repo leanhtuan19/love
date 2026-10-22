@@ -3,12 +3,14 @@ from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 from pathlib import Path
+import re
 import secrets
 import struct
 import tempfile
 import time
 import unittest
 from unittest import mock
+from urllib.parse import urljoin
 import zlib
 
 from PIL import Image
@@ -95,6 +97,20 @@ class BackendTests(unittest.TestCase):
         logged_out = self.client.post("/api/logout", headers=self.headers()).get_json()
         self.assertFalse(logged_out["authenticated"])
         self.assertEqual(self.client.get("/api/letters").status_code, 401)
+
+    def test_render_origin_fallback_preserves_custom_domain_and_csrf(self):
+        for explicit, expected in (("", "https://love-days.onrender.com"), ("https://love.example.com", "https://love.example.com")):
+            with mock.patch.dict("os.environ", {"LOVEDAYS_PUBLIC_ORIGIN": explicit, "RENDER_EXTERNAL_URL": "https://love-days.onrender.com"}):
+                app = create_app(self.config)
+            self.assertEqual(app.config["PUBLIC_ORIGIN"], expected)
+            client = app.test_client()
+            token = client.get("/api/session").get_json()["csrfToken"]
+            response = client.post("/api/auth", json={"password": self.password}, headers={"Origin": "https://attacker.invalid", "X-CSRF-Token": token})
+            self.assertEqual(response.status_code, 403)
+            response = client.post("/api/auth", json={"password": self.password}, headers={"Origin": expected})
+            self.assertEqual(response.status_code, 403)
+            response = client.post("/api/auth", json={"password": self.password}, headers={"Origin": expected, "X-CSRF-Token": token})
+            self.assertEqual(response.status_code, 200)
 
     def test_sixth_failure_closes_and_lockout_survives_reload_cookie_reset_restart(self):
         wrong = secrets.token_urlsafe(18)
@@ -296,9 +312,18 @@ class BackendTests(unittest.TestCase):
     def test_private_files_source_docs_and_traversal_are_never_public(self):
         for resource in ("/server.py", "/requirements.txt", "/.gitignore", "/letters.json", "/auth.sqlite3", "/secret.key", "/uploads/a.png", "/docs/letters.example.json", "/tests/test_backend.py", "/img/../server.py", "/img/%2e%2e/server.py", "/img/..%5cserver.py", "/.lovedays-private/letters.json"):
             self.assertEqual(self.client.get(resource).status_code, 404, resource)
-        for resource in ("/", "/app.js", "/fonts/Lora-Variable.ttf"):
+        for resource in ("/main/img/../../server.py", "/main/img/%2e%2e/%2e%2e/server.py", "/main/img/..%5c..%5cserver.py", "/main/js/server.py", "/main/css/letters.json"):
+            self.assertEqual(self.client.get(resource).status_code, 404, resource)
+        for resource in ("/", "/main/js/app.js", "/main/js/profiles.js", "/main/js/scroll.js", "/main/js/loading.js", "/main/js/letters.js", "/main/js/mobile.js", "/main/css/style.css", "/main/css/effects.css", "/main/css/letters.css", "/main/img/heart.png", "/main/img/traitim.gif", "/main/music/nhactinhyeu.mp3", "/app.js", "/style.css", "/fonts/Lora-Variable.ttf"):
             with self.client.get(resource) as response:
-                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.status_code, 200, resource)
+        with self.client.get("/main/css/effects.css") as response:
+            font_reference = re.search(r'url\(["\']?([^"\')]+)', response.get_data(as_text=True))
+            self.assertIsNotNone(font_reference)
+            font_url = urljoin("/main/css/effects.css", font_reference.group(1))
+        with self.client.get(font_url) as response:
+            self.assertEqual(response.status_code, 200, font_url)
+            self.assertIn("font", response.mimetype)
 
     def test_private_data_directory_cannot_be_inside_webroot(self):
         with self.assertRaises(ValueError):

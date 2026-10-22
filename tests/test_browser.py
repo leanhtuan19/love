@@ -111,9 +111,16 @@ class BrowserTests(unittest.TestCase):
         return page
 
     def gate(self, page):
-        page.locator("#heart").evaluate("e => { for (let i=0;i<7;i++) e.click(); }")
+        self.tap_page(page, 10)
         self.wait(page, "() => document.querySelector('#secret-dialog').open")
         self.wait(page, "() => !document.querySelector('#secret-password').disabled || !document.querySelector('#secret-workspace').hidden")
+
+    @staticmethod
+    def tap_page(page, count):
+        page.evaluate("() => window.scrollTo({top:0,behavior:'instant'})")
+        page.wait_for_timeout(60)
+        for _ in range(count):
+            page.mouse.click(20, 80)
 
     def login(self, page):
         self.gate(page)
@@ -150,15 +157,15 @@ class BrowserTests(unittest.TestCase):
         page = self.page(touch=True)
         requests = []
         page.on("request", lambda request: requests.append(urlsplit(request.url).path))
-        for _ in range(6):
-            page.locator("#heart").tap()
+        for _ in range(9):
+            page.touchscreen.tap(20, 80)
         self.assertFalse(page.locator("#secret-dialog").evaluate("e=>e.open"))
         self.assertFalse(any(path.startswith("/api/") for path in requests))
-        page.wait_for_timeout(2100)
-        page.locator("#heart").tap()
+        page.wait_for_timeout(1300)
+        page.touchscreen.tap(20, 80)
         self.assertFalse(page.locator("#secret-dialog").evaluate("e=>e.open"))
-        for _ in range(6):
-            page.locator("#heart").tap()
+        for _ in range(9):
+            page.touchscreen.tap(20, 80)
         self.wait(page, "() => document.querySelector('#secret-dialog').open")
         self.wait(page, "() => !document.querySelector('#secret-password').disabled")
         self.assertEqual(page.locator("#secret-dialog").count(), 1)
@@ -183,7 +190,7 @@ class BrowserTests(unittest.TestCase):
         self.wait(page, "() => !document.querySelector('#secret-dialog').open")
         page.reload(wait_until="domcontentloaded")
         self.wait(page, "() => !document.querySelector('#love-loader')")
-        page.locator("#heart").evaluate("e=>{for(let i=0;i<7;i++)e.click()}")
+        self.tap_page(page, 10)
         self.wait(page, "() => document.querySelector('#secret-dialog').open")
         page.wait_for_timeout(200)
         self.assertTrue(page.locator("#secret-password").is_disabled())

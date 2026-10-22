@@ -1,8 +1,11 @@
 (() => {
   'use strict';
 
-  // Thay đổi số lần nhấn / thời gian tại đây. Mật khẩu chỉ được kiểm tra ở máy chủ.
-  const SECRET_CONFIG = Object.freeze({ clicks: 7, windowMs: 2000, maxImages: 5, maxImageBytes: 5 * 1024 * 1024 });
+  // Thời gian là khoảng cách tối đa GIỮA hai lần nhấn, không phải cả chuỗi.
+  const SECRET_CONFIG = Object.freeze({
+    clicks: 10, maxGapMs: 1200, maxPressMs: 500, maxMovementPx: 12,
+    maxImages: 5, maxImageBytes: 5 * 1024 * 1024
+  });
   const LETTER_TYPES = Object.freeze({ diary: 'Nhật ký', 'love-letter': 'Thư tình', message: 'Lời nhắn' });
   const DEFAULT_PEOPLE = [{ id: 'tuan', name: 'Lê Anh Tuấn' }, { id: 'thu', name: 'Lê Phạm Anh Thư' }];
 
@@ -107,9 +110,11 @@
     let requestsInFlight = 0;
     let lastSessionCheck = 0;
     let tapCount = 0;
-    let tapStarted = 0;
+    let lastTapAt = 0;
     let tapTimer = null;
-    let forwarding = false;
+    let unlockTimer = null;
+    let press = null;
+    const activePointers = new Set();
     let passwordShakeTimer = null;
 
     const element = (tag, className, text) => {
@@ -131,7 +136,9 @@
       const date = new Date(value);
       return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Ho_Chi_Minh' }).format(date) : '';
     };
-    const imageUrl = (image) => `/api/images/${encodeURIComponent(image.id)}`;
+    // Preserve repository subpaths such as /love/ on GitHub Pages.
+    const appUrl = (path) => new URL(path.replace(/^\/+/, ''), new URL('.', document.baseURI)).href;
+    const imageUrl = (image) => appUrl(`api/images/${encodeURIComponent(image.id)}`);
     const personName = (id) => state.people.find((person) => person.id === id)?.name || '';
     const mutationBusy = () => state.saving || state.deleting;
 
@@ -147,11 +154,14 @@
       if (options.body && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
       requestsInFlight += 1;
       try {
-        const response = await fetch(path, { ...options, method, headers, credentials: 'same-origin', cache: 'no-store', signal: controller?.signal });
+        const response = await fetch(appUrl(path), { ...options, method, headers, credentials: 'same-origin', cache: 'no-store', signal: controller?.signal });
         let data;
         try { data = await response.json(); } catch (_) { data = {}; }
         if (!response.ok) {
-          const error = new Error(data.message || (response.status === 503 ? 'Hộp thư chưa được cấu hình trên máy chủ.' : 'Chưa kết nối được với hộp thư. Vui lòng thử lại.'));
+          const staticHosting = response.status === 404 || response.status === 405;
+          const error = new Error(data.message || (staticHosting
+            ? 'Trang tĩnh này chưa có máy chủ hộp thư. Hãy mở bản đầy đủ trên hosting Python đã được cấu hình; GitHub Pages không chạy API lưu thư.'
+            : response.status === 503 ? 'Hộp thư chưa được cấu hình trên máy chủ.' : 'Chưa kết nối được với hộp thư. Vui lòng thử lại.'));
           error.status = response.status;
           error.data = data;
           throw error;
@@ -351,6 +361,7 @@
 
     async function openDialog() {
       if (state.open || dialog.open || document.querySelector('dialog[open]')) return;
+      resetTaps();
       state.open = true;
       state.authenticated = false;
       state.authenticating = false;
@@ -378,6 +389,7 @@
     }
 
     dialog.addEventListener('close', () => {
+      resetTaps();
       generation += 1;
       detailGeneration += 1;
       state.open = false;
@@ -882,27 +894,94 @@
       if (state.draft?.dirty || state.saving) { event.preventDefault(); event.returnValue = ''; }
     });
 
-    column.addEventListener('click', (event) => {
-      if (forwarding || state.open || document.querySelector('dialog[open]')) return;
-      if (!heart.contains(event.target)) {
-        forwarding = true;
-        try { heart.click(); } finally { forwarding = false; }
-      }
-      const now = performance.now();
-      if (!tapCount || now - tapStarted > SECRET_CONFIG.windowMs) {
-        tapCount = 0;
-        tapStarted = now;
-        window.clearTimeout(tapTimer);
-        tapTimer = window.setTimeout(() => { tapCount = 0; tapStarted = 0; }, SECRET_CONFIG.windowMs);
-      }
-      tapCount += 1;
-      if (tapCount < SECRET_CONFIG.clicks) return;
+    const excludedTargets = [
+      'button', 'a', 'input', 'textarea', 'select', 'option', 'label', 'form',
+      'audio', 'video', 'iframe', 'summary', 'nav', 'dialog', '[contenteditable]:not([contenteditable="false"])',
+      '[role="button"]', '[role="link"]', '[role="slider"]', '[data-secret-ignore]'
+    ].join(',');
+
+    function resetTaps() {
       tapCount = 0;
-      tapStarted = 0;
+      lastTapAt = 0;
+      press = null;
       window.clearTimeout(tapTimer);
+      tapTimer = null;
+    }
+
+    function allowedTarget(target) {
+      if (!(target instanceof Element) || !document.body.contains(target) ||
+          state.open || document.querySelector('dialog[open]') ||
+          document.documentElement.classList.contains('love-loading') ||
+          target.closest('[data-secret-ignore]')) return false;
+      const control = target.closest(excludedTargets);
+      // The heart is both a normal love-effect button and the letter trigger.
+      // Include its SVG/path targets; other buttons and form controls stay excluded.
+      const isHeart = column.contains(target) && (target === heart || heart.contains(target));
+      return !control || (isHeart && control === heart);
+    }
+
+    // Pointer events represent a mouse click or a touch exactly once. Never also
+    // listen to click/touchend: mobile browsers synthesize click after touch.
+    document.addEventListener('pointerdown', (event) => {
+      if (!event.isTrusted) return;
+      activePointers.add(event.pointerId);
+      if (activePointers.size !== 1 || !event.isPrimary || event.button !== 0 || !allowedTarget(event.target)) {
+        resetTaps();
+        return;
+      }
+      press = {
+        id: event.pointerId, x: event.clientX, y: event.clientY, at: performance.now(),
+        scrollX: window.scrollX, scrollY: window.scrollY
+      };
+    }, { passive: true });
+
+    document.addEventListener('pointermove', (event) => {
+      if (!press || press.id !== event.pointerId) return;
+      if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > SECRET_CONFIG.maxMovementPx) resetTaps();
+    }, { passive: true });
+
+    document.addEventListener('pointerup', (event) => {
+      const initial = press;
+      const singlePointer = activePointers.size === 1;
+      activePointers.delete(event.pointerId);
+      if (!event.isTrusted || !initial || initial.id !== event.pointerId) return;
+      press = null;
+      const now = performance.now();
+      if (!singlePointer || !event.isPrimary || event.button !== 0 || !allowedTarget(event.target) ||
+          now - initial.at > SECRET_CONFIG.maxPressMs ||
+          Math.hypot(event.clientX - initial.x, event.clientY - initial.y) > SECRET_CONFIG.maxMovementPx ||
+          window.scrollX !== initial.scrollX || window.scrollY !== initial.scrollY) {
+        resetTaps();
+        return;
+      }
+      if (lastTapAt && now - lastTapAt > SECRET_CONFIG.maxGapMs) tapCount = 0;
+      lastTapAt = now;
+      tapCount += 1;
+      window.clearTimeout(tapTimer);
+      tapTimer = window.setTimeout(resetTaps, SECRET_CONFIG.maxGapMs);
+      if (tapCount !== SECRET_CONFIG.clicks) return;
+      resetTaps();
+      window.clearTimeout(unlockTimer);
+      column.classList.remove('secret-heart-unlock');
+      void column.offsetWidth;
       column.classList.add('secret-heart-unlock');
-      window.setTimeout(() => column.classList.remove('secret-heart-unlock'), 850);
+      unlockTimer = window.setTimeout(() => column.classList.remove('secret-heart-unlock'), 850);
       openDialog();
+    }, { passive: true });
+
+    document.addEventListener('pointercancel', (event) => {
+      activePointers.delete(event.pointerId);
+      resetTaps();
+    }, { passive: true });
+    document.addEventListener('scroll', resetTaps, { passive: true, capture: true });
+    window.addEventListener('blur', () => { activePointers.clear(); resetTaps(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        activePointers.clear();
+        resetTaps();
+        window.clearTimeout(unlockTimer);
+        column.classList.remove('secret-heart-unlock');
+      }
     });
   }
 

@@ -15,7 +15,7 @@ python -m pip install -r requirements.txt
 python server.py serve --host 127.0.0.1 --port 8001
 ~~~
 
-Mở http://127.0.0.1:8001. Nhấn trái tim 7 lần trong 2 giây. Nội dung thư chỉ được yêu cầu sau khi máy chủ xác nhận phiên.
+Mở http://127.0.0.1:8001. Nhấn 10 lần vào .heart-column, nút tim bên trong hoặc nền/vùng nội dung không tương tác, cách nhau tối đa 1.200 ms mỗi lần. Các điều khiển khác không tham gia bộ đếm. Nội dung thư chỉ được yêu cầu sau khi máy chủ xác nhận phiên.
 
 ## Cài trên máy mới
 
@@ -81,18 +81,20 @@ Sao lưu toàn bộ kho cùng nhau, bao gồm JSON, ảnh, khóa và SQLite. Nê
 | Thiết lập | Vị trí | Mặc định |
 | --- | --- | --- |
 | Mật khẩu | CLI server.py init-password | Giá trị đã khởi tạo riêng, không có mặc định trong mã |
-| Số lần nhấn | SECRET_CONFIG.clicks trong letters.js | 7 |
-| Khoảng thời gian nhấn | SECRET_CONFIG.windowMs trong letters.js | 2000 ms |
+| Số lần nhấn | SECRET_CONFIG.clicks trong main/js/letters.js | 10 |
+| Khoảng cách tối đa giữa hai lần nhấn | SECRET_CONFIG.maxGapMs trong main/js/letters.js | 1200 ms |
+| Giữ tay quá lâu không tính | SECRET_CONFIG.maxPressMs trong main/js/letters.js | 500 ms |
+| Dịch chuyển tay tối đa | SECRET_CONFIG.maxMovementPx trong main/js/letters.js | 12 pixel |
 | Lần sai tự đóng/khóa | MAX_LOGIN_FAILURES trong create_app của server.py | 6, nghĩa là cho phép sai 5 lần |
 | Cửa sổ giới hạn nhập sai | LOGIN_WINDOW_SECONDS trong server.py | 900 giây |
 | Thời hạn phiên | SESSION_TTL_SECONDS trong server.py | 1800 giây, có giới hạn tuyệt đối |
 | Ảnh mỗi thư | MAX_IMAGES ở đầu server.py | 5 |
 | Dung lượng ảnh | MAX_IMAGE_BYTES ở đầu server.py | 5 × 1024 × 1024 byte |
 | Giới hạn giải mã ảnh | MAX_IMAGE_PIXELS ở đầu server.py | 12 triệu pixel, mỗi cạnh không quá 8000 |
-| Mô tả người trong popup | Đối tượng profiles trong profiles.js | Tuấn và Thư theo thông tin đã cung cấp |
+| Mô tả người trong popup | Đối tượng profiles trong main/js/profiles.js | Tuấn và Thư theo thông tin đã cung cấp |
 | Danh sách ID người gửi/nhận | PEOPLE trong server.py | tuan, thu |
-| Dự phòng frontend khi chưa tải cấu hình | SECRET_CONFIG, DEFAULT_PEOPLE trong letters.js | Đồng bộ giá trị hiện tại |
-| Thời gian thoát loading dự phòng | FALLBACK_TIMEOUT_MS trong loading.js | 5000 ms |
+| Dự phòng frontend khi chưa tải cấu hình | SECRET_CONFIG, DEFAULT_PEOPLE trong main/js/letters.js | Đồng bộ giá trị hiện tại |
+| Thời gian thoát loading dự phòng | FALLBACK_TIMEOUT_MS trong main/js/loading.js | 5000 ms |
 
 Frontend lấy giới hạn ảnh và danh sách người từ API/session. Thông báo backend cũng cần được cập nhật nếu thay các giới hạn hiển thị. Khởi động lại server sau khi sửa cấu hình Python.
 
@@ -146,7 +148,7 @@ Không bật Secure cookie cho bản thử HTTP localhost, vì trình duyệt c�
 
 Backend mặc định không tin X-Forwarded-For do client gửi. Với reverse proxy, giới hạn IP có thể được dùng chung cho những người đi qua proxy; nếu mở rộng nhiều người dùng, cấu hình proxy tin cậy có kiểm soát trước khi tách IP thực. Không bật CORS cho nguồn tùy ý.
 
-GitHub Pages hoặc hosting chỉ phục vụ HTML không chạy được backend này. Cần máy chủ/dịch vụ có Python và dung lượng ghi bền cho kho riêng. Thiết lập dịch vụ khởi động lại sau reboot và sao lưu kho; không dùng filesystem tạm của một container không có volume.
+GitHub Pages hoặc hosting chỉ phục vụ HTML không chạy được backend này. Cần máy chủ/dịch vụ có Python và dung lượng ghi bền cho kho riêng. Thiết lập dịch vụ khởi động lại sau reboot và sao lưu kho; không dùng filesystem tạm của một container không có volume. Cấu hình GitHub/Pages/Render/Vercel phù hợp với repository hiện tại có tại [DEPLOYMENT.md](DEPLOYMENT.md). Render tự cung cấp RENDER_EXTERNAL_URL để backend kiểm tra origin; LOVEDAYS_PUBLIC_ORIGIN được ưu tiên nếu có tên miền riêng.
 
 ## Kiểm tra
 

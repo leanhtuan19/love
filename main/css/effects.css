@@ -1,6 +1,6 @@
 @font-face {
   font-family: "Lora Love";
-  src: url("fonts/Lora-Variable.ttf") format("truetype");
+  src: url("../../fonts/Lora-Variable.ttf") format("truetype");
   font-style: normal;
   font-weight: 400 700;
   font-display: swap;

@@ -1,0 +1,23 @@
+# This configuration creates a PAID web service and persistent disk only when
+# you explicitly connect and deploy it in your own Render account.
+services:
+  - type: web
+    name: lovedays
+    runtime: python
+    plan: 0.5c-512mb
+    region: singapore
+    branch: main
+    numInstances: 1
+    autoDeployTrigger: commit
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py serve --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/session
+    envVars:
+      - key: LOVEDAYS_DATA_DIR
+        value: /var/data/lovedays
+      - key: LOVEDAYS_COOKIE_SECURE
+        value: "true"
+    disk:
+      name: lovedays-private
+      mountPath: /var/data
+      sizeGB: 1

@@ -184,3 +184,8 @@
 @media (prefers-reduced-motion: reduce) {
   .secret-dialog, .secret-dialog *, .secret-lightbox, .secret-lightbox *, .secret-heart-unlock { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* iOS does not need to auto-zoom a focused field at 16px or larger. */
+@media (any-pointer: coarse) {
+  .secret-dialog :is(input:not([type="file"]), select, textarea) { font-size: 16px; }
+}
