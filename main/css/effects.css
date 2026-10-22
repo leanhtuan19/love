@@ -1,0 +1,106 @@
+@font-face {
+  font-family: "Lora Love";
+  src: url("fonts/Lora-Variable.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+/* Scope the Vietnamese typeface to the profile title. */
+#profile-name {
+  font-family: "Lora Love", "Segoe UI", Arial, sans-serif;
+  font-size: clamp(23px, 5.8vw, 30px);
+  font-weight: 500;
+  font-style: normal;
+  font-synthesis: none;
+  line-height: 1.55;
+  letter-spacing: 0;
+  padding-block: .06em;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  text-wrap: balance;
+}
+
+/* This overlay is opt-in: a page without JavaScript remains visible. */
+.love-loader { display: none; }
+.love-loading .love-loader {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  padding: 24px;
+  background: radial-gradient(ellipse at 35% 30%, #fbe0e9, transparent 60%), #fff6f8;
+  color: #a23b63;
+  opacity: 1;
+  transition: opacity 260ms ease;
+}
+.love-loading.love-loading-out .love-loader { opacity: 0; pointer-events: none; }
+.love-loader__scene { position: relative; display: grid; place-items: center; width: 154px; height: 154px; margin-bottom: 4px; }
+.love-loader__halo { position: absolute; inset: 8px; border-radius: 50%; background: radial-gradient(circle, #f4bfda66, transparent 70%); animation: love-loader-halo 2s ease-in-out infinite; }
+.love-loader__orbit { position: absolute; inset: 9px; border: 1px solid #deb5ca66; border-radius: 50%; }
+.love-loader__orbit::after { position: absolute; top: 16px; right: 13px; width: 6px; height: 6px; border-radius: 50%; background: #d591b2; box-shadow: 0 0 12px #db91b2aa; content: ""; }
+.love-loader__heart { display: block; width: 66px; height: 66px; color: #c85c86; filter: drop-shadow(0 7px 14px #c4698a26); animation: love-loader-beat 1.6s ease-in-out infinite; }
+.love-loader__heart svg { width: 100%; height: 100%; }
+.love-loader__star { position: absolute; color: #cc8ead; animation: love-loader-float 2.8s ease-in-out infinite alternate; }
+.love-loader__star--one { top: 10px; left: 11px; font-size: 26px; }
+.love-loader__star--two { bottom: 7px; right: 6px; font-size: 23px; animation-delay: -.7s; }
+.love-loader__star--three { bottom: 20px; left: 8px; font-size: 12px; animation-delay: -1.4s; }
+.love-loader > p { font-size: clamp(14px, 3.4vw, 17px); text-align: center; }
+.love-loader__caption { color: #9a7584; font-size: 10px; letter-spacing: .5px; text-align: center; }
+.love-loading .profile, .love-profiles-waiting .profile:not(.profile-love-done):not(.profile-love-enter) { opacity: 0; }
+
+/* One short entrance, followed by the existing profile interactions. */
+.profile { position: relative; }
+.profile-love-enter {
+  animation: love-profile-arrive 800ms cubic-bezier(.16, 1, .3, 1) both;
+  animation-delay: calc(var(--profile-index, 0) * 90ms);
+}
+.profile-love-enter .avatar-frame {
+  animation: love-avatar-bloom 1000ms cubic-bezier(.22, 1, .36, 1) both;
+  animation-delay: calc(100ms + var(--profile-index, 0) * 90ms);
+}
+.profile-love-enter .name, .profile-love-enter .profile-description {
+  animation: love-profile-name 650ms cubic-bezier(.22, 1, .36, 1) both;
+  animation-delay: calc(270ms + var(--profile-index, 0) * 90ms);
+}
+.profile-love-dust { position: absolute; inset: 0; pointer-events: none; }
+.profile-love-dust > span {
+  position: absolute;
+  left: var(--dust-x);
+  top: var(--dust-y);
+  color: var(--dust-color, #d58aaf);
+  font-size: var(--dust-size, 12px);
+  opacity: 0;
+  line-height: 1;
+  animation: love-profile-dust 1100ms ease-out both;
+  animation-delay: calc(120ms + var(--profile-index, 0) * 90ms);
+}
+@media (hover: hover) and (pointer: fine) {
+  .profile:not(.profile-love-enter):hover .avatar-frame { box-shadow: 0 7px 22px #c5759824, 0 0 0 3px #fbe8f1; }
+}
+
+@keyframes love-loader-beat { 0%, 35%, 70%, 100% { transform: scale(1); } 45% { transform: scale(1.09); } 55% { transform: scale(1.03); } }
+@keyframes love-loader-halo { 50% { opacity: .5; transform: scale(1.12); } }
+@keyframes love-loader-float { to { transform: translateY(-8px) rotate(10deg); opacity: .5; } }
+@keyframes love-profile-arrive { from { opacity: 0; transform: translateY(18px) scale(.94); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes love-avatar-bloom {
+  0% { transform: scale(.92); box-shadow: 0 0 0 0 #e8b2cd00; }
+  45% { transform: scale(1.035); box-shadow: 0 0 0 8px #e8b2cd26, 0 0 32px #d999bd38; }
+  100% { transform: scale(1); box-shadow: 0 5px 18px #a43b5d0d; }
+}
+@keyframes love-profile-name { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes love-profile-dust {
+  0% { opacity: 0; transform: translate(0, 5px) scale(.4) rotate(-10deg); }
+  25% { opacity: .65; }
+  100% { opacity: 0; transform: translate(var(--dust-dx, 12px), -30px) scale(1) rotate(14deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .love-loader *, .profile-love-enter, .profile-love-enter *, .profile-love-dust > span { animation: none !important; }
+  .love-loading .love-loader { transition: none; }
+  .love-profiles-waiting .profile { opacity: 1 !important; }
+}

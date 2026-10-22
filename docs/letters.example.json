@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "letters": [
+    {
+      "id": "af679eb1-6a47-44e9-898f-f2f74e486f5d",
+      "senderId": "tuan",
+      "senderName": "Lê Anh Tuấn",
+      "recipientId": "thu",
+      "recipientName": "Lê Phạm Anh Thư",
+      "type": "love-letter",
+      "title": "Một chút yêu thương (minh họa)",
+      "content": "Đây là nội dung minh họa cho cấu trúc dữ liệu.\nMỗi dòng được giữ nguyên khi đọc thư.",
+      "createdAt": "2026-10-22T07:30:00Z",
+      "updatedAt": "2026-10-22T07:30:00Z",
+      "images": [
+        {
+          "id": "15c3d936-0b7d-45a8-93bd-93c1ece9a55c",
+          "storageKey": "15c3d9360b7d45a893bd93c1ece9a55c.webp",
+          "originalName": "ky-niem.webp",
+          "mimeType": "image/webp",
+          "size": 123456,
+          "alt": "Ảnh minh họa một kỷ niệm",
+          "order": 0
+        }
+      ]
+    },
+    {
+      "id": "07196537-1fe6-41f2-99bc-dca1403d0c90",
+      "senderId": "thu",
+      "senderName": "Lê Phạm Anh Thư",
+      "recipientId": "tuan",
+      "recipientName": "Lê Anh Tuấn",
+      "type": "diary",
+      "title": "Nhật ký (minh họa)",
+      "content": "Ví dụ một trang nhật ký tiếng Việt. Không phải thư đã được lưu trên máy chủ.",
+      "createdAt": "2026-10-21T13:00:00Z",
+      "updatedAt": "2026-10-21T13:00:00Z",
+      "images": []
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#fff4f6">
+  <meta name="description" content="Đếm những ngày bên nhau của Lê Anh Tuấn và Lê Phạm Anh Thư, từ ngày 14 tháng 8 năm 2026.">
+  <link rel="icon" type="image/png" href="main/img/heart.png">
+  <link rel="stylesheet" href="main/css/style.css">
+  <link rel="stylesheet" href="main/css/effects.css">
+  <link rel="stylesheet" href="main/css/letters.css">
+  <link rel="preload" href="fonts/Lora-Variable.ttf" as="font" type="font/ttf" crossorigin>
+  <script src="main/js/loading.js"></script>
+  <script src="main/js/app.js" defer></script>
+  <script src="main/js/profiles.js" defer></script>
+  <script src="main/js/scroll.js" defer></script>
+  <script src="main/js/letters.js" defer></script>
+  <title>Love Days · Anh Tuấn &amp; Anh Thư</title>
+</head>
+<body>
+  <div id="love-loader" class="love-loader" role="status" aria-live="polite">
+    <div class="love-loader__scene" aria-hidden="true">
+      <span class="love-loader__halo"></span>
+      <span class="love-loader__orbit"></span>
+      <span class="love-loader__heart"><svg viewBox="0 0 64 64" fill="currentColor"><path d="M32 55 9.4 33.4C-5.2 19.3 15.4 1.5 28.1 14.1L32 18l3.9-3.9C48.6 1.5 69.2 19.3 54.6 33.4Z"/></svg></span>
+      <span class="love-loader__star love-loader__star--one">✧</span>
+      <span class="love-loader__star love-loader__star--two">♡</span>
+      <span class="love-loader__star love-loader__star--three">✦</span>
+    </div>
+    <p>Đang mở một chút yêu thương<span aria-hidden="true">…</span></p>
+    <span class="love-loader__caption">Mỗi khoảnh khắc đều dành cho nhau</span>
+  </div>
+  <canvas id="c" aria-hidden="true"></canvas>
+  <div class="scroll-progress" aria-hidden="true"><span></span></div>
+  <div id="celebration-layer" aria-hidden="true"></div>
+  <main id="wrapper">
+    <header class="page-header" data-reveal>
+      <p class="eyebrow"><span aria-hidden="true">♡</span> Chuyện của chúng mình</p>
+      <h1>LOVE DAYS</h1>
+      <p class="page-subtitle">Thêm một ngày, thêm một chút yêu thương.</p>
+    </header>
+    <section class="love-card" aria-label="Những ngày mình bên nhau">
+      <div id="clock-box" data-reveal>
+        <p class="section-label">Chúng mình đã bên nhau</p>
+        <div class="day-counter"><span id="day-count">0</span><span class="day-unit">ngày</span></div>
+        <div id="clock">
+          <time id="elapsed-time" datetime="PT0S" aria-label="0 giờ, 0 phút, 0 giây">00:00:00</time>
+          <span class="clock-caption" aria-hidden="true">Giờ <span>·</span> Phút <span>·</span> Giây</span>
+        </div>
+      </div>
+      <div class="section-divider" aria-hidden="true"><span>♡</span></div>
+      <div id="info" data-reveal>
+        <div class="person one">
+          <button class="profile" type="button" data-profile="tuan" aria-label="Xem thông tin về Lê Anh Tuấn" aria-haspopup="dialog" aria-controls="profile-dialog" disabled>
+            <span class="avatar-frame"><img src="https://graph.facebook.com/544100146/picture?width=200&amp;height=200&amp;access_token=6628568379|c1e620fa708a1d5696fb991c1bde5662" class="avt" width="120" height="120" alt="Ảnh đại diện của Anh Tuấn"></span>
+            <span class="name">Anh Tuấn</span>
+          </button>
+        </div>
+        <div class="heart-column">
+          <button id="heart" type="button" aria-label="Gửi một chút yêu thương" disabled>
+            <svg class="heart-icon" viewBox="0 0 64 64" aria-hidden="true"><path d="M32 55 9.4 33.4C-5.2 19.3 15.4 1.5 28.1 14.1L32 18l3.9-3.9C48.6 1.5 69.2 19.3 54.6 33.4Z" fill="currentColor"/></svg>
+          </button>
+        </div>
+        <div class="person two">
+          <button class="profile" type="button" data-profile="thu" aria-label="Xem thông tin về Lê Phạm Anh Thư" aria-haspopup="dialog" aria-controls="profile-dialog" disabled>
+            <span class="avatar-frame"><img src="https://graph.facebook.com/100053792104091/picture?width=200&amp;height=200&amp;access_token=6628568379|c1e620fa708a1d5696fb991c1bde5662" class="avt" width="120" height="120" alt="Ảnh đại diện của Anh Thư"></span>
+            <span class="name">Anh Thư</span>
+          </button>
+        </div>
+      </div>
+      <p class="anniversary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="5" width="16" height="16" rx="3"/><path d="M8 3v4m8-4v4M4 11h16m-12 4h2m4 0h2"/></svg><span>Từ ngày <time id="anniversary" datetime="2026-08-14">14/08/2026</time></span></p>
+      <div class="love-note" data-reveal>
+        <p class="love-message">I love you so much <span aria-hidden="true">♡</span></p>
+        <p id="heart-message" role="status" aria-live="polite" aria-atomic="true">Yêu thương vẫn đong đầy.</p>
+      </div>
+      <section id="music" aria-label="Nhạc tình yêu" data-reveal>
+        <div class="record-player">
+          <div class="turntable" aria-hidden="true">
+            <div class="vinyl-record">
+              <span class="vinyl-shine"></span>
+              <span class="record-label"><svg viewBox="0 0 32 32" fill="currentColor"><path d="M16 27 4.7 16.7C-2.6 9.7 7.7.8 14 7.1L16 9l2-1.9C24.3.8 34.6 9.7 27.3 16.7Z"/></svg><span>LOVE DAYS</span></span>
+              <span class="record-spindle"></span>
+            </div>
+            <span class="tonearm"></span>
+            <span class="record-sparkle">✦</span>
+          </div>
+          <div class="record-details">
+            <p class="record-eyebrow">Our love, on repeat</p>
+            <h2>Giai điệu của<br>chúng mình</h2>
+            <p class="record-description">Một bản tình ca. Mãi ngân nga.</p>
+            <div class="record-controls">
+              <button id="music-toggle" type="button" aria-pressed="false" aria-label="Bật nhạc tình yêu" disabled>
+                <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m9 5 11 7-11 7Z"/></svg>
+                <svg class="pause-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>
+                <span data-music-label>Bật nhạc</span>
+              </button>
+              <span class="music-equalizer" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></span>
+            </div>
+          </div>
+        </div>
+        <audio id="love-audio" src="main/music/nhactinhyeu.mp3" controls loop preload="metadata" aria-label="Trình phát nhạc tình yêu">Trình duyệt của bạn chưa hỗ trợ phát nhạc.</audio>
+        <p id="music-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      </section>
+    </section>
+    <footer data-reveal>Mỗi ngày bên nhau đều là một ngày đặc biệt <span aria-hidden="true">♥</span></footer>
+    <noscript><p class="noscript-note">Bật JavaScript để xem bộ đếm thời gian và hiệu ứng trái tim. Bạn vẫn có thể nghe nhạc bằng trình phát phía trên.</p></noscript>
+  </main>
+  <dialog id="profile-dialog" aria-labelledby="profile-name" aria-describedby="profile-bio">
+    <div class="profile-dialog-content">
+      <button id="profile-close" type="button" aria-label="Đóng thông tin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      <p class="eyebrow">Về người mình thương</p>
+      <img id="profile-avatar" class="dialog-avatar" width="112" height="112" alt="">
+      <p id="profile-role" class="profile-role"></p>
+      <h2 id="profile-name"></h2>
+      <p id="profile-bio"></p>
+      <dl id="profile-details"></dl>
+      <p class="profile-dialog-note"><span aria-hidden="true">♡</span> Một phần thật đặc biệt trong câu chuyện của chúng mình.</p>
+    </div>
+  </dialog>
+</body>
+</html>
