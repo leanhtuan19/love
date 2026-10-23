@@ -181,6 +181,7 @@ Nếu đã tạo Render trả phí, mã cấu hình trong repo không tự hủy
 | ModuleNotFoundError | Đường dẫn project trong WSGI, Virtualenv của Web app và việc pip cài trong đúng môi trường |
 | Không có python3.12 | Kiểm tra System Image; dùng một Python từ 3.10 trở lên có sẵn và chọn cùng phiên bản ở Web/virtualenv |
 | Website báo lỗi 500/502 | Mở Error log trong tab Web, đọc traceback mới nhất sau Reload |
+| UnixFileLock ... inherited across fork; construct a new instance | Cập nhật server.py có khóa riêng theo PID, rồi Web → Reload; xem hướng dẫn ngay dưới bảng |
 | Hộp thư chưa có mật khẩu | Init trong đúng `~/love`, cùng kho mà Web app dùng; mật khẩu không đi theo Git |
 | SQLite disk I/O hoặc database locked | Kiểm tra DELETE journal trong adapter và Bash; tránh quản trị/ghi cùng lúc; xem Error log trước khi sửa dữ liệu |
 | Lỗi 403 khi đăng nhập | Dùng HTTPS, kiểm tra origin đúng hostname của tab Web; với EU cần override origin trước import adapter |
@@ -188,5 +189,27 @@ Nếu đã tạo Render trả phí, mã cấu hình trong repo không tự hủy
 | CSS, nhạc, avatar lỗi 404 | Kiểm tra hai static mappings và các file đã push đủ lên GitHub |
 | Disk quota exceeded | Xem dung lượng Files; không xóa JSON/SQLite/khóa để giải phóng chỗ |
 | Website tự ngừng sau một tháng | Vào Web gia hạn/kích hoạt lại theo nút Dashboard |
+
+### Sửa lỗi UnixFileLock inherited across fork
+
+Nếu Error log báo `RuntimeError: UnixFileLock ... letters.lock was inherited across fork; construct a new instance`, worker WSGI đang dùng đối tượng khóa được tạo trong tiến trình cha. Đây là lỗi vòng đời đối tượng khóa; không phải yêu cầu xóa hoặc tạo lại kho thư. Bản sửa trong server.py tạo một cặp RLock/FileLock riêng cho từng PID, vẫn khóa cùng file letters.lock và vẫn giữ khóa trong toàn bộ thao tác đọc–sửa–ghi. [Guard của thư viện filelock](https://py-filelock.readthedocs.io/en/latest/_modules/filelock/_api.html).
+
+Trên máy Windows, sau khi có bản sửa trong thư mục dự án:
+
+```powershell
+Set-Location "C:\Users\Admin\Downloads\lovedays-main"
+git add server.py tests/test_fork_locks.py docs/DEPLOY_FREE.md docs/TEST_REPORT.md
+git commit -m "Fix inherited file locks on PythonAnywhere workers"
+git push origin main
+```
+
+Trong Bash của PythonAnywhere:
+
+```bash
+cd ~/love
+git pull --ff-only origin main
+```
+
+Sau khi pull thành công, vào Web → chọn ứng dụng → Reload. Chờ reload hoàn tất, tải lại website rồi mở hộp thư. Kiểm tra request GET /api/letters trả 200 và thử tạo/sửa một thư thử. Thư, ảnh, mật khẩu và đường dẫn kho giữ nguyên; không cần hạ phiên bản filelock. Nếu pull bị chặn bởi thay đổi local, kiểm tra git status và xử lý thay đổi trước khi tiếp tục, không reset hoặc xóa kho.
 
 Mật khẩu chung vẫn cấp chung quyền đọc, tạo, sửa, xóa. Tên người gửi/người nhận không tạo tài khoản riêng. Chưa tạo tài khoản, deploy hoặc kiểm thử trên hạ tầng PythonAnywhere thay bạn.

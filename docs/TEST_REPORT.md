@@ -1,5 +1,11 @@
 # Báo cáo kiểm thử
 
+## Sửa khóa file bị kế thừa qua fork — 23/10/2026
+
+Traceback trên PythonAnywhere xác định GET /api/letters bị lỗi 500 vì UnixFileLock của letters.lock được tạo trước khi worker fork. LetterStore hiện lấy cặp RLock/FileLock riêng theo PID, giữ nguyên đường dẫn file khóa, khóa đọc–sửa–ghi và timeout 15 giây. Không đổi dữ liệu hoặc cấu hình xác thực.
+
+Đã chạy 23/23 test_backend.py và 3/3 test_pythonanywhere.py thành công sau bản sửa. Nhóm mới test_fork_locks.py đạt 3 kiểm tra mô phỏng PID, bỏ qua 1 kiểm tra os.fork thật vì môi trường hiện tại là Windows. Kiểm tra mới bao phủ tạo lại cả hai khóa, lồng context giữ tính reentrant, dùng lại phiên đăng nhập và đọc/tạo/sửa/xóa thư sau đổi PID, giữ nguyên dữ liệu khi đọc và trả 503 khi một thread khác giữ khóa file thật. Thay implementation cũ trong bộ nhớ tái hiện được RuntimeError và lỗi 500 như log người dùng; không ghi đè file nguồn khi kiểm chứng. git diff --check đạt. Chưa deploy/reload hoặc kiểm tra fork thật trên tài khoản PythonAnywhere; frontend không thay đổi trong bản sửa này.
+
 ## Bổ sung triển khai PythonAnywhere miễn phí
 
 Sau khi thêm adapter WSGI và cấu hình SQLite journal, đã chạy `python -m unittest discover -s tests -p test_pythonanywhere.py -v`: 3/3 đạt; chạy lại `test_backend.py`: 23/23 đạt. Kiểm tra mới dùng app thật và kho tạm ngoài dự án: HTTPS/Secure cookie, CSRF/origin, đăng nhập, CRUD, đọc từ thiết bị khác, dữ liệu sau tạo lại app, kho mặc định dùng chung với CLI, SQLite DELETE, origin EU và từ chối journal mode không hỗ trợ. Không dùng mật khẩu/dữ liệu thật. Chưa deploy hoặc chạy thử network filesystem/HTTPS/upload trên tài khoản PythonAnywhere; browser suites không chạy lại vì frontend không đổi trong phần bổ sung này.

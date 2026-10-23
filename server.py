@@ -139,8 +139,9 @@ class LetterStore:
         self.path = directory / "letters.json"
         self.images = directory / "images"
         self.images.mkdir(mode=0o700, exist_ok=True)
-        self.thread_lock = threading.RLock()
-        self.file_lock = FileLock(str(directory / "letters.lock"), timeout=15)
+        # WSGI servers may import this store before forking their workers.
+        # Neither an inherited RLock nor a FileLock may be reused by a child.
+        self._process_locks = {}
         with self.locked():
             if not self.path.exists():
                 self.write({"schemaVersion": 1, "letters": []})
@@ -148,7 +149,16 @@ class LetterStore:
     @contextmanager
     def locked(self):
         try:
-            with self.thread_lock, self.file_lock:
+            pid = os.getpid()
+            locks = self._process_locks.get(pid)
+            if locks is None:
+                # Publish one pair per process, even when its first requests
+                # arrive concurrently. Unselected pairs have never been held.
+                locks = self._process_locks.setdefault(pid, (
+                    threading.RLock(),
+                    FileLock(str(self.directory / "letters.lock"), timeout=15),
+                ))
+            with locks[0], locks[1]:
                 yield
         except FileLockTimeout:
             raise ApiError(503, "storage_busy", "Hộp thư đang bận. Vui lòng thử lại.")
