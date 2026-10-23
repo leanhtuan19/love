@@ -81,6 +81,18 @@
 .secret-workspace-header h2 { font-size: clamp(26px, 4vw, 33px); }
 .secret-text-button { min-height: 34px; padding: 5px 0; border: 0; color: #a95c7a; background: transparent; font-size: 12px !important; white-space: nowrap; text-decoration: underline; text-decoration-color: #e5c3d0; text-underline-offset: 4px; }
 .secret-text-button:hover { color: #77344e; }
+.secret-lock-button { position: relative; display: grid; place-items: center; flex: 0 0 44px; width: 44px; min-height: 44px; padding: 10px; border: 1px solid #e6c5d2; border-radius: 14px; color: #9e4f71; background: linear-gradient(145deg, #fffafc, #fbe8f0); box-shadow: 0 3px 9px #ad55751a; transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease; }
+.secret-lock-button svg { display: block; width: 24px; height: 24px; }
+.secret-lock-shackle { transform-origin: 12px 10px; transition: transform 220ms cubic-bezier(.2,.8,.2,1); }
+.secret-lock-button:active { transform: scale(.93); background: #f7d7e5; }
+.secret-lock-button:active .secret-lock-shackle, .secret-lock-button.is-locking .secret-lock-shackle { animation: secret-lock-click 300ms ease both; }
+.secret-lock-tooltip { position: absolute; z-index: 4; top: calc(100% + 6px); right: 0; width: max-content; max-width: 150px; padding: 5px 8px; border-radius: 7px; color: #fff9fc; background: #8f4b68; opacity: 0; pointer-events: none; transform: translateY(-3px); font-size: 11px; transition: opacity 150ms ease, transform 150ms ease; }
+.secret-lock-button:focus-visible .secret-lock-tooltip { opacity: 1; transform: none; }
+@media (hover: hover) and (pointer: fine) {
+  .secret-lock-button:hover { transform: translateY(-2px); box-shadow: 0 6px 15px #ad557529; }
+  .secret-lock-button:hover .secret-lock-shackle { transform: translateY(-2px) rotate(-8deg); }
+  .secret-lock-button:hover .secret-lock-tooltip { opacity: 1; transform: none; }
+}
 .secret-danger { color: #b04b51; }
 .secret-access-note { margin: 15px 0 0; padding: 10px 12px; border: 1px solid #efdfd9; border-radius: 9px; color: #917469; background: #fcf7ef; font-size: 11px; }
 .secret-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin: 21px 0 16px; }
@@ -150,6 +162,7 @@
 @keyframes secret-heart-key { 0%,100% { filter: none; } 45% { filter: drop-shadow(0 0 17px #de7ba8); transform: scale(1.08); } }
 @keyframes secret-image-loading { to { background-position: -240% 0; } }
 @keyframes secret-password-shake { 0%,100% { transform: translateX(0); } 25%,65% { transform: translateX(-5px); } 45%,85% { transform: translateX(5px); } }
+@keyframes secret-lock-click { 0% { transform: translateY(-2px); } 60% { transform: translateY(1px); } 100% { transform: none; } }
 @media (max-width: 760px) {
   .secret-workspace-header { display: block; }
   .secret-workspace-header > button { margin-top: 8px; }

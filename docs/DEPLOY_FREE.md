@@ -1,5 +1,7 @@
 # Triển khai miễn phí: GitHub + PythonAnywhere Beginner
 
+Nếu đang nâng cấp bản có sẵn lên phiên bản Nhật ký/Cài đặt/tự khóa, dùng [hướng dẫn nâng cấp có sao lưu và setup](UPGRADE_SETTINGS_JOURNAL.md) trước. Cài mới cũng cần chạy `setup-admins` để bật trang quản trị; không có thông tin đăng nhập mặc định trong source.
+
 Phương án này chạy giao diện và API Flask hiện có trên cùng một địa chỉ HTTPS. Thư vẫn lưu JSON, ảnh nằm trong kho riêng và SQLite quản lý xác thực. Không cần đổi framework, tạo database trả phí hoặc đặt dữ liệu riêng trong GitHub.
 
 Tài liệu này dùng hệ thống US tại www.pythonanywhere.com, gói Beginner $0/tháng. Đăng ký từ [trang Beginner](https://www.pythonanywhere.com/registration/register/beginner/), không chọn gói Developer. [Bảng giá chính thức](https://www.pythonanywhere.com/pricing/).

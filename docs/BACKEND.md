@@ -1,5 +1,7 @@
 # Cấu hình và vận hành Love Days
 
+Nhật ký, Cài đặt quản trị và cơ chế khóa 300/30 giây được mô tả trong [hướng dẫn nâng cấp](UPGRADE_SETTINGS_JOURNAL.md). Thư cũ tiếp tục dùng JSON; các bảng mới dùng auth.sqlite3 trong cùng kho riêng.
+
 ## Kiến trúc
 
 Website gốc là frontend tĩnh. Trình duyệt không thể tự ghi an toàn một JSON chung cho hai thiết bị hoặc giữ bí mật một mật khẩu được nhúng trong JavaScript. Bản này giữ nguyên frontend và bổ sung Flask, Waitress, Werkzeug, Pillow và filelock. Không dùng localStorage làm kho thư.

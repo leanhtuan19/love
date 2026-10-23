@@ -1,5 +1,33 @@
 # Báo cáo kiểm thử
 
+## Nhật ký, quản trị và tự khóa — 23/10/2026
+
+Đã chạy các nhóm kiểm thử dưới đây trong quá trình tích hợp: **81 bài đạt, 1 bài fork POSIX bị bỏ qua trên Windows**. Kho, khóa và credentials kiểm thử đều được tạo tạm ngoài repository; không sửa dữ liệu thật và không đăng nhập tài khoản production.
+
+| File kiểm thử | Kết quả |
+| --- | --- |
+| test_backend.py | 23/23 |
+| test_site_features.py | 14/14 |
+| test_mailbox_expiry.py | 9/9 |
+| test_mailbox_ui.py | 5/5 |
+| test_features_browser.py | 3/3 |
+| test_browser.py | 7/7 |
+| test_gestures.py | 9/9 |
+| test_fork_locks.py | 3 đạt, 1 bỏ qua vì không có os.fork |
+| test_pythonanywhere.py | 3/3 |
+| test_static_build.py | 3/3 |
+| test_backup_private.py | 2/2 |
+
+Chạy từng nhóm bằng `python -m unittest discover -s tests -p TEN_FILE.py -v`; có thể chạy toàn bộ bằng `python -m unittest discover -s tests -v`. Các nhóm được chạy riêng trong quá trình tích hợp, không tuyên bố đã chạy một lượt nguyên bộ sau mỗi thay đổi giao diện.
+
+Kiểm tra mới bao phủ mốc idle 300/đóng 30 giây bằng đồng hồ giả ở backend, mở lại trước hạn, nhiều tab/cookie chung, tải lại, hoạt động nền không gia hạn, khóa ngay, thu hồi phiên và giữ nháp trong RAM. Chromium dùng chuột/touch thật và hai tab; sự kiện chuyển nền và vị trí/thời gian được mô phỏng có kiểm soát. Tương tác tổng hợp không tạo hoạt động hòm thư. API ảnh/thư từ chối phiên đã hết hạn.
+
+Quản trị/nhật ký đã kiểm tra mã hóa username và không lộ thông tin trong API công khai, CSRF/origin, phiên độc lập, xác thực lại/thu hồi sau đổi tài khoản, setup lặp an toàn, rate limit sau restart, đổi mật khẩu chức năng, ghi lịch sử trước/sau trong transaction, xóa mềm, ảnh lịch sử riêng tư, rollback SQL/upload, tìm tiếng Việt không dấu và ngày thực theo múi giờ Việt Nam, phân trang, upload/giới hạn ảnh, tọa độ thủ công và 8 yêu cầu ghi đồng thời từ hai app. Sao lưu kiểm tra JSON/ảnh/khóa và snapshot SQLite có thể đọc lại, không ghi đè bản sao cũ hoặc ghi ZIP vào vùng public.
+
+Luồng trình duyệt mới thực hiện đăng bài kèm ảnh sau mở quyền, định vị thành công/từ chối vẫn nhập thủ công, xem ảnh lớn, nhập sai/đúng mật khẩu sửa bài, mở lịch sử và xóa có xác nhận; đổi hồ sơ/nội dung có hiệu lực ngay và đổi tài khoản phải đăng nhập lại. Bootstrap có chuỗi đóng script được kiểm tra không thực thi XSS. Kiểm tra thêm phản hồi quản trị/lịch sử bị trì hoãn sau đóng/mở popup xác nhận không làm hiện lại dữ liệu cũ. Không ghi nhận lỗi JavaScript hoặc tràn ngang ở 320/390 px trong các luồng mới; các hồi quy bố cục cũ cũng đạt.
+
+Chưa deploy/reload trên tài khoản PythonAnywhere, chưa xác nhận filesystem mạng, proxy HTTPS và quota hosting thật; chưa kiểm tra iPhone/Safari/Android vật lý hoặc WebKit. Các ResourceWarning từ MP3 bị Chromium hủy preload trong Werkzeug test server không phải lỗi JavaScript. Hướng dẫn nâng cấp đầy đủ: [UPGRADE_SETTINGS_JOURNAL.md](UPGRADE_SETTINGS_JOURNAL.md).
+
 ## Sửa khóa file bị kế thừa qua fork — 23/10/2026
 
 Traceback trên PythonAnywhere xác định GET /api/letters bị lỗi 500 vì UnixFileLock của letters.lock được tạo trước khi worker fork. LetterStore hiện lấy cặp RLock/FileLock riêng theo PID, giữ nguyên đường dẫn file khóa, khóa đọc–sửa–ghi và timeout 15 giây. Không đổi dữ liệu hoặc cấu hình xác thực.

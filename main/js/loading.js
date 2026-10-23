@@ -96,6 +96,13 @@
 
   fallbackTimer = window.setTimeout(finishLoading, FALLBACK_TIMEOUT_MS);
   document.addEventListener('DOMContentLoaded', () => {
+    try {
+      const content = JSON.parse(document.getElementById('site-public-config')?.textContent || '{}').content || {};
+      const message = document.querySelector('#love-loader > p');
+      const caption = document.querySelector('#love-loader .love-loader__caption');
+      if (message && typeof content.loaderText === 'string') message.textContent = content.loaderText;
+      if (caption && typeof content.loaderCaption === 'string') caption.textContent = content.loaderCaption;
+    } catch (_) { /* The static HTML remains usable without a backend. */ }
     // Defer scripts have now executed. Remote avatars and audio do not block readiness.
     if (finished) initializeProfileEntrance();
     else finishLoading();

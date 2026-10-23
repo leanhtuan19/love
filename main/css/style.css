@@ -62,6 +62,8 @@ h1 {
   line-height: 1.2;
 }
 .page-subtitle { color: var(--muted); font-size: 14px; }
+.page-header h1, .page-subtitle, .love-message, .record-details h2, .record-description, #wrapper > footer { overflow-wrap: anywhere; }
+.record-details h2 { white-space: pre-line; }
 .love-card {
   position: relative;
   isolation: isolate;

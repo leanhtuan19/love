@@ -21,6 +21,7 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -52,6 +53,7 @@ PUBLIC_FILES = {
     "index.html", "main/css/style.css", "main/css/effects.css", "main/css/letters.css",
     "main/js/app.js", "main/js/profiles.js", "main/js/scroll.js",
     "main/js/loading.js", "main/js/letters.js", "main/js/mobile.js",
+    "main/js/site-config.js", "main/js/journal.js", "main/css/journal.css",
     "fonts/Lora-Variable.ttf", "fonts/OFL-Lora.txt",
 }
 PUBLIC_ALIASES = {
@@ -243,6 +245,20 @@ class AuthStore:
                 CREATE TABLE IF NOT EXISTS failures (key TEXT PRIMARY KEY, count INTEGER NOT NULL, started REAL NOT NULL);
                 CREATE INDEX IF NOT EXISTS session_browser ON sessions(browser_id);
             """)
+            # Preserve existing authentication records while adding durable
+            # deadlines. A worker restart must not renew mailbox access.
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                columns = {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}
+                if "last_activity" not in columns:
+                    db.execute("ALTER TABLE sessions ADD COLUMN last_activity REAL")
+                if "close_deadline" not in columns:
+                    db.execute("ALTER TABLE sessions ADD COLUMN close_deadline REAL")
+                db.execute("UPDATE sessions SET last_activity=seen WHERE last_activity IS NULL")
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
         if os.name != "nt":
             self.path.chmod(0o600)
 
@@ -336,7 +352,8 @@ def create_app(test_config=None):
         SQLITE_JOURNAL_MODE=os.environ.get("LOVEDAYS_SQLITE_JOURNAL_MODE", "WAL"),
         COOKIE_SECURE=os.environ.get("LOVEDAYS_COOKIE_SECURE", "").lower() in ("1", "true", "yes"),
         PUBLIC_ORIGIN=os.environ.get("LOVEDAYS_PUBLIC_ORIGIN") or os.environ.get("RENDER_EXTERNAL_URL"),
-        SESSION_TTL_SECONDS=1800, LOGIN_WINDOW_SECONDS=900, MAX_LOGIN_FAILURES=6,
+        SESSION_TTL_SECONDS=1800, MAILBOX_IDLE_SECONDS=300, MAILBOX_CLOSE_SECONDS=30,
+        LOGIN_WINDOW_SECONDS=900, MAX_LOGIN_FAILURES=6,
         TIME_PROVIDER=time.time, MAX_CONTENT_LENGTH=MAX_IMAGES * MAX_IMAGE_BYTES + 512 * 1024,
         MAX_FORM_MEMORY_SIZE=128 * 1024, MAX_FORM_PARTS=12,
     )
@@ -360,6 +377,30 @@ def create_app(test_config=None):
 
     def now():
         return float(app.config["TIME_PROVIDER"]())
+
+    def current_people(db=None):
+        features = app.extensions.get("site_features")
+        profiles = features.group("profiles", db) if features else {}
+        return [{"id": person["id"], "name": profiles.get(person["id"], {}).get("name", person["name"])}
+                for person in PEOPLE]
+
+    def mailbox_limits():
+        reader = app.extensions.get("site_settings_reader")
+        settings = reader() if reader else {}
+        return {
+            "idleSeconds": int(settings.get("mailboxIdleSeconds", app.config["MAILBOX_IDLE_SECONDS"])),
+            "closeSeconds": int(settings.get("mailboxCloseSeconds", app.config["MAILBOX_CLOSE_SECONDS"])),
+        }
+
+    def set_session_state(record):
+        limits = g.mailbox_limits
+        g.authenticated = True
+        g.session_id = record["id"]
+        g.session_idle_at = record["last_activity"] + limits["idleSeconds"]
+        g.session_close_at = record["close_deadline"]
+        g.session_absolute_at = record["created"] + app.config["SESSION_TTL_SECONDS"]
+        g.session_expires_at = min(g.session_idle_at, g.session_absolute_at,
+                                   g.session_close_at if g.session_close_at is not None else float("inf"))
 
     def decode_cookie(name, age):
         try:
@@ -388,8 +429,12 @@ def create_app(test_config=None):
         remaining, retry = rate_status(db)
         return {"authenticated": g.authenticated, "csrfToken": g.csrf,
                 "attemptsRemaining": remaining, "retryAfter": retry, "closePopup": retry > 0,
-                "limits": LIMITS, "people": PEOPLE, "sharedAccess": True,
+                "limits": LIMITS, "people": current_people(db), "sharedAccess": True,
                 "passwordConfigured": bool(auth.password_hash(db)),
+                "serverNow": utc_timestamp(now()), "mailboxTimeouts": g.mailbox_limits,
+                "idleExpiresAt": utc_timestamp(g.session_idle_at) if g.authenticated else None,
+                "closeExpiresAt": utc_timestamp(g.session_close_at) if g.authenticated and g.session_close_at is not None else None,
+                "absoluteExpiresAt": utc_timestamp(g.session_absolute_at) if g.authenticated else None,
                 "expiresAt": utc_timestamp(g.session_expires_at) if g.authenticated else None,
                 "expiresIn": max(0, math.ceil(g.session_expires_at - now())) if g.authenticated else 0}
 
@@ -405,6 +450,9 @@ def create_app(test_config=None):
         g.clear_session = False
         g.authenticated = False
         g.session_expires_at = None
+        g.session_id = None
+        g.session_idle_at = g.session_close_at = g.session_absolute_at = None
+        g.mailbox_limits = mailbox_limits()
         with auth.transaction() as db:
             browser_id = decode_cookie("lovedays_browser", 30 * 86400)
             browser = db.execute("SELECT * FROM browsers WHERE id=?", (browser_id,)).fetchone() if browser_id else None
@@ -420,14 +468,17 @@ def create_app(test_config=None):
             record = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone() if session_id else None
             password_hash = auth.password_hash(db)
             version = hashlib.sha256(password_hash.encode()).hexdigest() if password_hash else None
-            if record and record["browser_id"] == browser_id and record["version"] == version and timestamp - record["created"] < app.config["SESSION_TTL_SECONDS"] and timestamp - record["seen"] < app.config["SESSION_TTL_SECONDS"]:
-                g.authenticated = True
-                g.session_expires_at = min(record["created"] + app.config["SESSION_TTL_SECONDS"], timestamp + app.config["SESSION_TTL_SECONDS"])
-                db.execute("UPDATE sessions SET seen=? WHERE id=?", (timestamp, session_id))
+            valid = (record and record["browser_id"] == browser_id and record["version"] == version
+                     and timestamp < record["created"] + app.config["SESSION_TTL_SECONDS"]
+                     and timestamp < record["last_activity"] + g.mailbox_limits["idleSeconds"]
+                     and (record["close_deadline"] is None or timestamp < record["close_deadline"]))
+            if valid:
+                set_session_state(record)
             elif session_id:
                 db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
                 g.clear_session = True
-            db.execute("DELETE FROM sessions WHERE created<? OR seen<?", (timestamp - app.config["SESSION_TTL_SECONDS"], timestamp - app.config["SESSION_TTL_SECONDS"]))
+            db.execute("DELETE FROM sessions WHERE created<=? OR last_activity<=? OR close_deadline<=?",
+                       (timestamp - app.config["SESSION_TTL_SECONDS"], timestamp - g.mailbox_limits["idleSeconds"], timestamp))
             db.execute("DELETE FROM failures WHERE started<?", (timestamp - app.config["LOGIN_WINDOW_SECONDS"],))
             db.execute("DELETE FROM browsers WHERE seen<?", (timestamp - 31 * 86400,))
         if request.method not in ("GET", "HEAD", "OPTIONS"):
@@ -527,9 +578,39 @@ def create_app(test_config=None):
             db.execute("UPDATE browsers SET csrf=? WHERE id=?", (g.csrf, g.browser_id))
             db.execute("DELETE FROM sessions WHERE browser_id=?", (g.browser_id,))
             g.new_session = secrets.token_urlsafe(32)
-            db.execute("INSERT INTO sessions VALUES(?,?,?,?,?)", (g.new_session, g.browser_id, now(), now(), hashlib.sha256(password_hash.encode()).hexdigest()))
-            g.authenticated = True
-            g.session_expires_at = now() + app.config["SESSION_TTL_SECONDS"]
+            timestamp = now()
+            db.execute("INSERT INTO sessions(id,browser_id,created,seen,version,last_activity,close_deadline) VALUES(?,?,?,?,?,?,NULL)",
+                       (g.new_session, g.browser_id, timestamp, timestamp, hashlib.sha256(password_hash.encode()).hexdigest(), timestamp))
+            set_session_state(db.execute("SELECT * FROM sessions WHERE id=?", (g.new_session,)).fetchone())
+            return jsonify(session_payload(db))
+
+    @app.post("/api/activity")
+    @authenticated
+    def mailbox_activity():
+        # Only this explicit endpoint records actual use. Polling, reads and
+        # image loads never keep a mailbox session alive.
+        with auth.transaction() as db:
+            timestamp = now()
+            record = db.execute("SELECT * FROM sessions WHERE id=?", (g.session_id,)).fetchone()
+            if (not record or timestamp >= record["last_activity"] + g.mailbox_limits["idleSeconds"]
+                    or timestamp >= record["created"] + app.config["SESSION_TTL_SECONDS"]
+                    or (record["close_deadline"] is not None and timestamp >= record["close_deadline"])):
+                raise ApiError(401, "unauthorized", "Hộp thư đã khóa. Vui lòng nhập lại mật khẩu.")
+            db.execute("UPDATE sessions SET last_activity=?,seen=? WHERE id=?", (timestamp, timestamp, g.session_id))
+            set_session_state(db.execute("SELECT * FROM sessions WHERE id=?", (g.session_id,)).fetchone())
+            return jsonify(session_payload(db))
+
+    @app.post("/api/mailbox/close")
+    @authenticated
+    def mailbox_close():
+        with auth.transaction() as db:
+            deadline = now() + g.mailbox_limits["closeSeconds"]
+            db.execute("UPDATE sessions SET close_deadline=CASE WHEN close_deadline IS NULL THEN ? ELSE MIN(close_deadline,?) END WHERE id=?",
+                       (deadline, deadline, g.session_id))
+            record = db.execute("SELECT * FROM sessions WHERE id=?", (g.session_id,)).fetchone()
+            if not record:
+                raise ApiError(401, "unauthorized", "Hộp thư đã khóa. Vui lòng nhập lại mật khẩu.")
+            set_session_state(record)
             return jsonify(session_payload(db))
 
     @app.post("/api/logout")
@@ -567,9 +648,10 @@ def create_app(test_config=None):
             raise ApiError(400, "invalid_payload", "Mốc cập nhật của thư không hợp lệ.")
         if any(not isinstance(body.get(field), str) for field in ("senderId", "recipientId", "type")) or body["senderId"] not in PERSON_NAMES or body["recipientId"] not in PERSON_NAMES or body["type"] not in LETTER_TYPES:
             raise ApiError(400, "invalid_letter", "Người gửi, người nhận hoặc loại thư không hợp lệ.")
-        values = {"senderId": body["senderId"], "recipientId": body["recipientId"], "type": body["type"], "recipientName": PERSON_NAMES[body["recipientId"]]}
+        person_names = {person["id"]: person["name"] for person in current_people()}
+        values = {"senderId": body["senderId"], "recipientId": body["recipientId"], "type": body["type"], "recipientName": person_names[body["recipientId"]]}
         for field, maximum in (("senderName", 80), ("title", 160), ("content", 20000)):
-            value = body.get(field, PERSON_NAMES[body["senderId"]] if field == "senderName" else None)
+            value = body.get(field, person_names[body["senderId"]] if field == "senderName" else None)
             if not valid_text(value, maximum) or (field != "content" and any(character in value for character in "\r\n")):
                 raise ApiError(400, "invalid_letter", "Tên người gửi, tiêu đề hoặc nội dung chưa hợp lệ.")
             values[field] = value.strip() if field != "content" else value
@@ -694,10 +776,28 @@ def create_app(test_config=None):
         path = (ROOT / relative).resolve()
         if not allowed or ROOT not in path.parents or not path.is_file():
             raise ApiError(404, "not_found", "Không tìm thấy trang.")
+        if resource == "index.html":
+            features = app.extensions["site_features"]
+            with auth.connection() as db:
+                public_config = {"profiles": features.group("profiles", db),
+                                 "content": features.group("content", db), "limits": LIMITS}
+            serialized = json.dumps(public_config, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+            # This non-executable bootstrap is public content only. Escape HTML
+            # delimiters even though subsequent renderers use textContent.
+            for original, escaped in (("&", "\\u0026"), ("<", "\\u003c"), (">", "\\u003e"),
+                                      ("\u2028", "\\u2028"), ("\u2029", "\\u2029")):
+                serialized = serialized.replace(original, escaped)
+            bootstrap = '<script type="application/json" id="site-public-config">' + serialized + '</script>'
+            markup = path.read_text(encoding="utf-8").replace("<head>", "<head>\n" + bootstrap, 1)
+            response = app.response_class(markup, mimetype="text/html")
+            response.headers["Cache-Control"] = "no-store"
+            return response
         # Windows installations may not register .ttf in the system MIME database.
         mimetype = "font/ttf" if relative.suffix.lower() == ".ttf" else None
         return send_file(path, mimetype=mimetype, max_age=0)
 
+    from site_features import install_features
+    install_features(app, auth, now, signer, sys.modules[__name__])
     return app
 
 
@@ -705,11 +805,17 @@ def main():
     parser = argparse.ArgumentParser(description="Love Days private letters server")
     commands = parser.add_subparsers(dest="command")
     commands.add_parser("init-password", help="Set or replace the private password interactively")
+    commands.add_parser("setup-admins", help="Initialize administrator accounts without overwriting existing accounts")
+    commands.add_parser("migrate", help="Apply safe, idempotent schema and content migrations")
     serve_parser = commands.add_parser("serve", help="Run the Waitress WSGI server")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", default=8001, type=int)
     args = parser.parse_args()
     app = create_app()
+    if args.command in {"setup-admins", "migrate"}:
+        from site_features import setup_admins, migrate
+        (setup_admins if args.command == "setup-admins" else migrate)(app)
+        return
     if args.command == "init-password":
         if app.config["PASSWORD_HASH"]:
             parser.error("Remove LOVEDAYS_PASSWORD_HASH before changing the persisted password.")

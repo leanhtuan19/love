@@ -134,19 +134,23 @@ class BackendTests(unittest.TestCase):
 
     def test_absolute_session_expiry_is_server_enforced(self):
         state = self.login()
-        self.assertEqual(state["expiresIn"], 1800)
+        self.assertEqual(state["expiresIn"], 300)
         self.assertTrue(state["expiresAt"].endswith("Z"))
-        self.clock[0] += 1200
+        # Real mailbox activity refreshes idle time, never the absolute ceiling.
+        for _ in range(7):
+            self.clock[0] += 250
+            response = self.client.post("/api/activity", json={}, headers=self.headers())
+            self.assertEqual(response.status_code, 200, response.get_json())
         refreshed = self.client.get("/api/session").get_json()
         self.assertTrue(refreshed["authenticated"])
-        self.assertEqual(refreshed["expiresIn"], 600)
-        self.clock[0] += 601
+        self.assertEqual(refreshed["expiresIn"], 50)
+        self.clock[0] += 51
         self.assertEqual(self.client.get("/api/letters").status_code, 401)
         self.assertFalse(self.client.get("/api/session").get_json()["authenticated"])
 
     def test_idle_expiry_and_password_change_revoke_sessions(self):
         self.login()
-        self.clock[0] += 1801
+        self.clock[0] += 301
         self.assertEqual(self.client.get("/api/letters").status_code, 401)
         self.login()
         self.app.extensions["auth_store"].override_hash = None

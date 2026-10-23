@@ -2,7 +2,7 @@
   'use strict';
 
   function initialize() {
-    const startDate = new Date('2026-08-14T00:00:00');
+    let startDate = new Date('2026-08-14T00:00:00+07:00');
     const dayCount = document.getElementById('day-count');
     const elapsedTime = document.getElementById('elapsed-time');
     const anniversary = document.getElementById('anniversary');
@@ -20,6 +20,12 @@
     let previousDays = null;
     let counterFrame = null;
     let counterPulseTimer = null;
+    let heartMessages = [
+      'Thêm một ngày, thêm một chút thương.',
+      'Cảm ơn vì đã luôn ở đây.',
+      'Mãi cùng nhau nhé.',
+      'Yêu thương vẫn đong đầy.'
+    ];
 
     function updateStatus(element, message) {
       if (!element) return;
@@ -111,8 +117,8 @@
     }
 
     if (anniversary) {
-      anniversary.textContent = `${pad(startDate.getDate())}/${pad(startDate.getMonth() + 1)}/${startDate.getFullYear()}`;
-      anniversary.setAttribute('datetime', `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())}`);
+      const iso = anniversary.getAttribute('datetime') || '2026-08-14';
+      anniversary.textContent = iso.split('-').reverse().join('/');
     }
 
     function updateClock() {
@@ -138,6 +144,19 @@
     }
 
     synchronizeClock();
+    document.addEventListener('lovedays:site-updated', (event) => {
+      const content = event.detail?.content || {};
+      if (/^\d{4}-\d{2}-\d{2}$/.test(content.anniversary || '')) {
+        const next = new Date(`${content.anniversary}T00:00:00+07:00`);
+        if (Number.isFinite(next.getTime())) { startDate = next; synchronizeClock(); }
+      }
+      if (Array.isArray(content.heartMessages)) {
+        const messages = content.heartMessages.filter((message) => typeof message === 'string' && message.trim());
+        if (messages.length) heartMessages = messages;
+      }
+      if (typeof content.heartMessage === 'string') updateStatus(heartMessage, content.heartMessage);
+      if (typeof content.musicStatus === 'string' && document.getElementById('love-audio')?.paused) updateStatus(musicStatus, content.musicStatus);
+    });
     let heartbeatTimer = null;
     let celebrationTimer = null;
     const burstAnimations = new Set();
@@ -225,16 +244,10 @@
 
     if (heartButton) {
       heartButton.disabled = false;
-      const messages = [
-        'Thêm một ngày, thêm một chút thương.',
-        'Cảm ơn vì đã luôn ở đây.',
-        'Mãi cùng nhau nhé.',
-        'Yêu thương vẫn đong đầy.'
-      ];
       let messageIndex = 0;
       heartButton.addEventListener('click', () => {
-        updateStatus(heartMessage, messages[messageIndex]);
-        messageIndex = (messageIndex + 1) % messages.length;
+        updateStatus(heartMessage, heartMessages[messageIndex % heartMessages.length]);
+        messageIndex = (messageIndex + 1) % heartMessages.length;
         celebrate();
       });
     }

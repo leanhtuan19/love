@@ -105,7 +105,7 @@
 
       const anniversary = document.getElementById('anniversary');
       const startDateValue = anniversary?.getAttribute('datetime');
-      const startDate = startDateValue ? new Date(`${startDateValue}T00:00:00`) : null;
+      const startDate = startDateValue ? new Date(`${startDateValue}T00:00:00+07:00`) : null;
       if (startDate && Number.isFinite(startDate.getTime())) {
         addDetail('Ngày bắt đầu', anniversary.textContent.trim());
         const days = Math.max(0, Math.floor((Date.now() - startDate.getTime()) / 86400000));
@@ -133,6 +133,18 @@
         }
       });
       trigger.disabled = false;
+    });
+
+    document.addEventListener('lovedays:site-updated', (event) => {
+      Object.entries(event.detail?.profiles || {}).forEach(([id, values]) => {
+        if (!profiles[id] || !values || typeof values !== 'object') return;
+        ['name', 'partner', 'introduction', 'gender', 'hometown', 'hobbies'].forEach((key) => {
+          if (typeof values[key] === 'string') profiles[id][key] = values[key];
+        });
+        if (typeof values.birthday === 'string') profiles[id].birthday = /^\d{4}-\d{2}-\d{2}$/.test(values.birthday)
+          ? values.birthday.split('-').reverse().join('/') : values.birthday;
+      });
+      if (dialog.open && activeTrigger) renderProfile(activeTrigger, profiles[activeTrigger.dataset.profile]);
     });
 
     closeButton.addEventListener('click', () => dialog.close());

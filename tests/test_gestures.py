@@ -69,7 +69,10 @@ class GestureTests(unittest.TestCase):
         page.mouse.click(5, 5)
         self.taps(page, 8, varied=True)
         self.assertFalse(self.is_open(page))
-        self.assertFalse(any(path.startswith("/api/") for path in self.paths))
+        # Public site configuration and published journal entries load on the
+        # page; the private mailbox remains untouched until its trigger opens.
+        self.assertNotIn("/api/session", self.paths)
+        self.assertNotIn("/api/letters", self.paths)
         self.taps(page, 1)
         self.wait(page, "() => document.querySelector('#secret-dialog').open")
         self.wait(page, "() => !document.querySelector('#secret-password').disabled")
@@ -274,7 +277,7 @@ class GestureTests(unittest.TestCase):
 
     def test_repository_subpath_loads_assets_and_keeps_session_api_in_mount(self):
         page = self.page(prefix="/love/", width=390)
-        self.assertEqual(page.evaluate("document.styleSheets.length"), 3)
+        self.assertEqual(page.evaluate("document.styleSheets.length"), 4)
         self.assertGreater(float(page.locator("#heart").evaluate("e => getComputedStyle(e).width").replace("px", "")), 20)
         self.assert_opens_on_tenth(page)
         self.wait(page, "() => !document.querySelector('#secret-password').disabled")

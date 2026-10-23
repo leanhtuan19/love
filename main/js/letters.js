@@ -31,7 +31,7 @@
             <p id="secret-auth-status" class="secret-feedback" role="status" aria-live="polite" aria-atomic="true"></p>
           </section>
           <section id="secret-workspace" class="secret-workspace" aria-label="Những lá thư của chúng mình" hidden>
-            <header class="secret-workspace-header"><div><p class="secret-eyebrow">Một nơi để giữ yêu thương</p><h2 id="secret-workspace-title">Thư của chúng mình</h2></div><button id="secret-logout" class="secret-text-button" type="button">Khóa hộp thư</button></header>
+            <header class="secret-workspace-header"><div><p class="secret-eyebrow">Một nơi để giữ yêu thương</p><h2 id="secret-workspace-title">Thư của chúng mình</h2></div><button id="secret-logout" class="secret-lock-button" type="button" aria-label="Khóa hòm thư" title="Khóa hòm thư"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path class="secret-lock-shackle" d="M7 10V7a5 5 0 0 1 10 0v3"/><rect x="4.5" y="10" width="15" height="11" rx="3"/><path d="M12 14v3"/></svg><span class="secret-lock-tooltip" aria-hidden="true">Khóa hòm thư</span></button></header>
             <p class="secret-access-note">Những người biết mật khẩu có chung quyền đọc, sửa và xóa thư.</p>
             <div class="secret-toolbar"><label class="secret-filter-label" for="secret-filter">Gửi đến <select id="secret-filter"><option value="">Tất cả</option></select></label><button id="secret-new" class="secret-button" type="button"><span aria-hidden="true">＋</span> Viết thư</button></div>
             <div class="secret-columns">
@@ -116,6 +116,17 @@
     let press = null;
     const activePointers = new Set();
     let passwordShakeTimer = null;
+    let activityTimer = null;
+    let activitySending = false;
+    let activityPending = false;
+    let lastActivitySent = 0;
+    let recentScrollIntent = 0;
+    let closeRequest = Promise.resolve();
+    let sessionMasked = false;
+    let sessionExpiresAt = 0;
+    const responseTimes = new WeakMap();
+    const ACTIVITY_THROTTLE_MS = 1000;
+    const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('lovedays-mailbox-state') : null;
 
     const element = (tag, className, text) => {
       const node = document.createElement(tag);
@@ -152,11 +163,13 @@
       const headers = new Headers(options.headers || {});
       if (method !== 'GET') headers.set('X-CSRF-Token', state.csrf);
       if (options.body && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
+      const startedAt = Date.now();
       requestsInFlight += 1;
       try {
-        const response = await fetch(appUrl(path), { ...options, method, headers, credentials: 'same-origin', cache: 'no-store', signal: controller?.signal });
+        const response = await fetch(appUrl(path), { ...options, method, headers, credentials: 'same-origin', cache: 'no-store', signal: options.signal === null ? undefined : (options.signal || controller?.signal) });
         let data;
         try { data = await response.json(); } catch (_) { data = {}; }
+        if (data && typeof data === 'object') responseTimes.set(data, startedAt);
         if (!response.ok) {
           const staticHosting = response.status === 404 || response.status === 405;
           const error = new Error(data.message || (staticHosting
@@ -241,6 +254,11 @@
     function showGate(message = '', error = false) {
       state.authenticated = false;
       window.clearTimeout(sessionTimer);
+      window.clearTimeout(activityTimer);
+      activityTimer = null;
+      activityPending = false;
+      sessionExpiresAt = 0;
+      sessionMasked = false;
       clearPrivateDOM();
       gate.hidden = false;
       gate.classList.remove('is-unlocking');
@@ -270,15 +288,115 @@
       window.clearTimeout(sessionTimer);
       sessionTimer = null;
       if (!state.authenticated) return;
+      const serverNow = Date.parse(data.serverNow);
       const date = Date.parse(data.expiresAt);
-      const remaining = Number.isFinite(date) ? date - Date.now() : Number(data.expiresIn) * 1000;
+      const startedAt = responseTimes.get(data) || Date.now();
+      // Subtract the round trip conservatively, independent of device clock
+      // skew. A delayed response must never reveal an already expired mailbox.
+      const remaining = Number.isFinite(date) && Number.isFinite(serverNow)
+        ? date - serverNow - Math.max(0, Date.now() - startedAt)
+        : Number(data.expiresIn) * 1000;
       if (!Number.isFinite(remaining)) return;
+      sessionExpiresAt = Date.now() + Math.max(0, remaining);
       const expire = () => {
         if (!state.open || !state.authenticated) return;
-        if (mutationBusy() || sessionLoading || requestsInFlight) { sessionTimer = window.setTimeout(expire, 250); return; }
-        loadSession(generation, true);
+        maskPrivate();
+        verifySession(true, true);
       };
-      sessionTimer = window.setTimeout(expire, Math.max(0, Math.min(remaining + 100, 2147483647)));
+      sessionTimer = window.setTimeout(expire, Math.max(0, Math.min(remaining, 2147483647)));
+    }
+
+    function maskPrivate() {
+      if (!state.authenticated) return;
+      sessionMasked = true;
+      workspace.hidden = true;
+      workspace.inert = true;
+      if (lightbox.open) lightbox.close();
+      lightboxImage.removeAttribute('src');
+      gate.hidden = false;
+      announce('Đang kiểm tra quyền truy cập hộp thư…', false, authStatus);
+    }
+
+    function publishSessionSignal(kind) {
+      // Signals contain no letters, identities, credentials or tokens.
+      if (channel) channel.postMessage({ kind });
+      else {
+        try { localStorage.setItem('lovedays-mailbox-signal', JSON.stringify({ kind, nonce: Math.random(), at: Date.now() })); }
+        catch (_) { /* Cross-tab synchronization remains server-authoritative. */ }
+      }
+    }
+
+    function onSessionSignal(message) {
+      if (!['activity', 'close', 'lock', 'unlock', 'settings'].includes(message?.kind) || !state.open) return;
+      maskPrivate();
+      if (!document.hidden) verifySession(true);
+    }
+    if (channel) channel.addEventListener('message', (event) => onSessionSignal(event.data));
+    else window.addEventListener('storage', (event) => {
+      if (event.key !== 'lovedays-mailbox-signal' || !event.newValue) return;
+      try { onSessionSignal(JSON.parse(event.newValue)); } catch (_) { /* Ignore unrelated invalid signals. */ }
+    });
+
+    async function recordActivity() {
+      activityTimer = null;
+      if (!activityPending || !state.open || !state.authenticated || sessionMasked || document.hidden || activitySending || Date.now() >= sessionExpiresAt) return;
+      activityPending = false;
+      activitySending = true;
+      lastActivitySent = Date.now();
+      const token = generation;
+      try {
+        const data = await request('/api/activity', { method: 'POST', body: '{}' });
+        if (!alive(token) || !state.authenticated) return;
+        syncSession(data);
+        publishSessionSignal('activity');
+      } catch (error) { if (alive(token) && !cancelled(error)) await handlePrivateError(error, token); }
+      finally {
+        activitySending = false;
+        if (activityPending && state.authenticated && !sessionMasked && !document.hidden && activityTimer === null) {
+          activityTimer = window.setTimeout(recordActivity, Math.max(0, ACTIVITY_THROTTLE_MS - (Date.now() - lastActivitySent)));
+        }
+      }
+    }
+
+    function flushPendingActivity() {
+      window.clearTimeout(activityTimer);
+      activityTimer = null;
+      if (!activityPending || !state.authenticated || !state.csrf || Date.now() >= sessionExpiresAt) return;
+      activityPending = false;
+      lastActivitySent = Date.now();
+      // Flush only a real queued interaction before the page is suspended.
+      // This is independent of popup cancellation and never runs periodically.
+      fetch(appUrl('/api/activity'), {
+        method: 'POST', body: '{}', credentials: 'same-origin', cache: 'no-store', keepalive: true,
+        headers: { 'X-CSRF-Token': state.csrf, 'Content-Type': 'application/json' }
+      }).then((response) => { if (response.ok) publishSessionSignal('activity'); }).catch(() => {});
+    }
+
+    function mailboxInteraction(event) {
+      if (!event.isTrusted || !state.open || !state.authenticated || sessionMasked || document.hidden) return;
+      const target = event.target;
+      if (!(target instanceof Element) || (!workspace.contains(target) && !lightbox.contains(target) && target !== dialog)) return;
+      if (event.type === 'scroll' && Date.now() - recentScrollIntent > 1500) return;
+      if (event.type !== 'scroll') recentScrollIntent = Date.now();
+      activityPending = true;
+      if (activityTimer !== null || activitySending) return;
+      const wait = Math.max(0, ACTIVITY_THROTTLE_MS - (Date.now() - lastActivitySent));
+      if (wait) activityTimer = window.setTimeout(recordActivity, wait);
+      else recordActivity();
+    }
+    ['pointerdown', 'keydown', 'input', 'wheel', 'scroll'].forEach((name) => document.addEventListener(name, mailboxInteraction, { capture: true, passive: true }));
+
+    function scheduleCloseDeadline() {
+      if (!state.authenticated || !state.csrf) return;
+      const csrf = state.csrf;
+      // Independent of the popup controller: closing must not abort this write.
+      closeRequest = fetch(appUrl('/api/mailbox/close'), {
+        method: 'POST', headers: { 'X-CSRF-Token': csrf, 'Content-Type': 'application/json' },
+        body: '{}', credentials: 'same-origin', cache: 'no-store', keepalive: true
+      }).then(async (response) => {
+        if (!response.ok && response.status !== 401) throw new Error('Không gửi được thời hạn khóa. Hãy mở lại và khóa bằng nút ổ khóa.');
+        publishSessionSignal('close');
+      }).catch((error) => toast(error.message || 'Chưa gửi được yêu cầu khóa. Hãy kiểm tra kết nối.'));
     }
 
     function updateGateControls() {
@@ -310,6 +428,8 @@
       state.csrf = '';
       updateGateControls();
       try {
+        await closeRequest;
+        if (!alive(token) || sessionToken !== sessionRequestGeneration) return;
         const data = await request('/api/session');
         if (!alive(token) || sessionToken !== sessionRequestGeneration) return;
         if (sessionToken === sessionRequestGeneration) sessionLoading = false;
@@ -328,8 +448,10 @@
       } finally { if (sessionToken === sessionRequestGeneration) sessionLoading = false; }
     }
 
-    async function verifySession() {
-      if (!state.open || !state.authenticated || sessionLoading || requestsInFlight || state.authenticating || mutationBusy() || Date.now() - lastSessionCheck < 1000) return;
+    async function verifySession(force = false, expired = false) {
+      if (!state.open || document.hidden || state.authenticating || (!force && (sessionLoading || Date.now() - lastSessionCheck < 1000))) return;
+      if (!force && !state.authenticated) return;
+      maskPrivate();
       sessionLoading = true;
       const sessionToken = ++sessionRequestGeneration;
       lastSessionCheck = Date.now();
@@ -339,17 +461,40 @@
         if (!alive(token) || sessionToken !== sessionRequestGeneration) return;
         if (sessionToken === sessionRequestGeneration) sessionLoading = false;
         syncSession(data);
+        if (state.authenticated && sessionExpiresAt <= Date.now()) {
+          maskPrivate();
+          return;
+        }
         if (!state.authenticated) {
           showGate('Phiên đã hết hạn. Nhập lại mật khẩu để tiếp tục; bản nháp vẫn được giữ trong phiên này.');
           password.value = '';
           startLockCountdown();
           if (!password.disabled) password.focus({ preventScroll: true });
-        } else if (workspace.hidden) await enterWorkspace(token);
-      } catch (error) { if (alive(token) && !cancelled(error)) announce('Chưa kiểm tra lại được phiên làm việc. Vui lòng kiểm tra kết nối.', true); }
+        } else if (!document.hidden && workspace.hidden) {
+          if (expired) await enterWorkspace(token);
+          else {
+            sessionMasked = false;
+            workspace.inert = false;
+            gate.hidden = true;
+            workspace.hidden = false;
+            if (!state.letters.length && !state.draft) await enterWorkspace(token);
+          }
+        }
+      } catch (error) { if (alive(token) && !cancelled(error)) announce('Chưa kiểm tra lại được phiên làm việc. Vui lòng kiểm tra kết nối hoặc nhập lại mật khẩu.', true, authStatus); }
       finally { if (sessionToken === sessionRequestGeneration) sessionLoading = false; }
     }
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) verifySession(); });
-    window.addEventListener('focus', verifySession);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { flushPendingActivity(); maskPrivate(); }
+      else if (state.open) verifySession(true);
+    });
+    window.addEventListener('blur', () => { flushPendingActivity(); maskPrivate(); });
+    window.addEventListener('focus', () => { if (state.open) verifySession(true); });
+    window.addEventListener('pageshow', (event) => { if (event.persisted && state.open) { maskPrivate(); verifySession(true); } });
+    window.addEventListener('pagehide', () => { flushPendingActivity(); maskPrivate(); });
+    document.addEventListener('lovedays:mailbox-settings-changed', () => {
+      publishSessionSignal('settings');
+      if (state.open) { maskPrivate(); verifySession(true); }
+    });
 
     function toast(message) {
       const note = byId('toast');
@@ -389,6 +534,8 @@
     }
 
     dialog.addEventListener('close', () => {
+      flushPendingActivity();
+      scheduleCloseDeadline();
       resetTaps();
       generation += 1;
       detailGeneration += 1;
@@ -402,6 +549,11 @@
       sessionRequestGeneration += 1;
       window.clearTimeout(sessionTimer);
       sessionTimer = null;
+      window.clearTimeout(activityTimer);
+      activityTimer = null;
+      activityPending = false;
+      sessionExpiresAt = 0;
+      sessionMasked = false;
       if (lockTimer !== null) window.clearInterval(lockTimer);
       lockTimer = null;
       authForm.reset();
@@ -443,6 +595,8 @@
         const data = await request('/api/auth', { method: 'POST', body: JSON.stringify({ password: entered }) });
         if (!alive(token)) return;
         syncSession(data);
+        lastActivitySent = Date.now();
+        publishSessionSignal('unlock');
         password.value = '';
         password.removeAttribute('aria-invalid');
         if (!state.authenticated) throw new Error('Chưa mở được hộp thư. Vui lòng thử lại.');
@@ -496,9 +650,11 @@
       gate.classList.add('is-unlocking');
       announce('Phong thư đã mở…', false, authStatus);
       await delay(motion.matches ? 0 : 650);
-      if (!alive(token) || !state.authenticated) return;
+      if (!alive(token) || !state.authenticated || document.hidden) return;
       gate.hidden = true;
       workspace.hidden = false;
+      workspace.inert = false;
+      sessionMasked = false;
       dialog.classList.add('is-workspace');
       dialog.setAttribute('aria-labelledby', 'secret-workspace-title');
       fillPeople();
@@ -832,7 +988,8 @@
       saveButton.disabled = busy;
       byId('discard').disabled = busy;
       newButton.disabled = busy;
-      logoutButton.disabled = busy;
+      // Locking remains available even while an upload is in progress.
+      logoutButton.disabled = false;
       closeButton.disabled = busy;
       filter.disabled = busy;
       list.querySelectorAll('button').forEach((node) => { node.disabled = busy; });
@@ -872,22 +1029,24 @@
     newButton.addEventListener('click', () => { if (!state.authenticated || mutationBusy()) return; if (state.draft) { showCompose(); title.focus({ preventScroll: true }); } else startCompose(); });
     filter.addEventListener('change', renderList);
     logoutButton.addEventListener('click', async () => {
-      if (mutationBusy() || !state.authenticated) return;
-      if (state.draft?.dirty && !window.confirm('Khóa hộp thư? Bản nháp được giữ tạm trong phiên này, đến khi tải lại trang.')) return;
+      if (!state.authenticated) return;
       const token = generation;
       sessionRequestGeneration += 1;
       sessionLoading = false;
       logoutButton.disabled = true;
+      logoutButton.classList.add('is-locking');
+      showGate('Đang khóa hòm thư…');
       try {
-        const data = await request('/api/logout', { method: 'POST', body: '{}' });
+        const data = await request('/api/logout', { method: 'POST', body: '{}', keepalive: true, signal: null });
+        publishSessionSignal('lock');
         if (!alive(token)) return;
         syncSession(data);
         password.value = '';
         showGate('Hộp thư đã được khóa.');
         updateGateControls();
         password.focus({ preventScroll: true });
-      } catch (error) { await handlePrivateError(error, token); }
-      finally { if (alive(token)) logoutButton.disabled = false; }
+      } catch (error) { if (alive(token) && !cancelled(error)) announce('Chưa xác nhận được việc khóa trên máy chủ. Kiểm tra kết nối rồi mở lại để khóa.', true, authStatus); }
+      finally { logoutButton.classList.remove('is-locking'); if (alive(token)) logoutButton.disabled = false; }
     });
 
     window.addEventListener('beforeunload', (event) => {
