@@ -1,5 +1,15 @@
 # Báo cáo kiểm thử
 
+## Mobile, bàn phím và popup — 23/10/2026
+
+Đã chạy **34 kiểm thử đạt** trong quá trình tích hợp bản sửa mobile: 7 bài mới trong `test_mobile_layout.py`, 7 `test_browser.py`, 5 `test_mailbox_ui.py`, 3 `test_features_browser.py`, 9 `test_gestures.py` và 3 `test_static_build.py`. Các nhóm chạy riêng; sau bản sửa phong thư và animation popup đã chạy lại hai bài liên quan (zoom và ma trận responsive), không tuyên bố chạy một lượt nguyên bộ sau mỗi thay đổi CSS.
+
+Đo trước sửa: ô đăng nhập quản trị và soạn nhật ký có font thực tế 14px ở 320×740 và 740×320. Sau sửa các ô nhập mobile, tìm kiếm, ngày, chọn file và select đều đạt tối thiểu 16px, desktop giữ kích thước cũ. Ma trận gồm 320/360/375/390/414/430/768px, 844×390 và 740×320 ngang, cùng desktop 1280×900; kiểm tra chiều rộng trang, tràn bên trong popup, nút đóng sau cuộn, nội dung tiếng Việt/URL dài và ảnh. Ở zoom 2 lần, kiểm thử phát hiện phong thư tràn nội bộ 10px do giấy có chiều rộng cố định; đã sửa kích thước tương đối và kiểm tra lại đạt.
+
+Kiểm tra mới dùng backend thật với kho/credentials tạm: soạn/lưu thư với ba ảnh, nhật ký ba ảnh, lightbox lồng nhau, ba chu kỳ mở/đóng và trả lại vị trí cuộn. VisualViewport được mô phỏng khi bàn phím thu hẹp vùng nhìn, có offset và đổi ngang/dọc; có kiểm tra fallback không có API này. Có kiểm tra chữ tăng 200% bằng CSS, zoom 2 lần qua Chrome CDP, animation popup thường và chế độ giảm chuyển động. Không ghi nhận lỗi JavaScript; `git diff --check` đạt.
+
+Môi trường là Chrome headless trên Windows với viewport/touch mobile mô phỏng. Chưa kiểm tra bàn phím thật, tăng cỡ chữ hệ điều hành, iPhone/Safari/Chrome iOS, Chrome/Samsung Internet/Firefox Android vật lý hoặc engine WebKit/Firefox. Không kết luận tương thích tuyệt đối hoặc cấm zoom được trên mọi trình duyệt. Backend và dependency không thay đổi nên không chạy lại toàn bộ kiểm thử backend trong bản sửa này. Chi tiết và lệnh cập nhật: [MOBILE_REPORT.md](MOBILE_REPORT.md).
+
 ## Nhật ký, quản trị và tự khóa — 23/10/2026
 
 Đã chạy các nhóm kiểm thử dưới đây trong quá trình tích hợp: **81 bài đạt, 1 bài fork POSIX bị bỏ qua trên Windows**. Kho, khóa và credentials kiểm thử đều được tạo tạm ngoài repository; không sửa dữ liệu thật và không đăng nhập tài khoản production.

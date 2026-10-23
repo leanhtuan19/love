@@ -33,48 +33,17 @@
     const details = document.getElementById('profile-details');
 
     if (!dialog || typeof dialog.showModal !== 'function' || !closeButton || !avatar || !name || !bio || !details) return;
+    if (dialog.parentElement !== document.body) document.body.append(dialog);
 
     let activeTrigger = null;
-    let scrollState = null;
     let backdropPointer = null;
 
     function lockScroll() {
-      if (scrollState) return;
-      const body = document.body;
-      const scrollbarWidth = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
-      const paddingRight = Number.parseFloat(window.getComputedStyle(body).paddingRight) || 0;
-      const properties = ['position', 'top', 'left', 'width', 'padding-right'];
-      scrollState = {
-        x: window.scrollX,
-        y: window.scrollY,
-        styles: properties.map((property) => [property, body.style.getPropertyValue(property), body.style.getPropertyPriority(property)])
-      };
-      body.classList.add('dialog-open');
-      body.style.position = 'fixed';
-      body.style.top = `${-scrollState.y}px`;
-      body.style.left = `${-scrollState.x}px`;
-      body.style.width = '100%';
-      if (scrollbarWidth) body.style.paddingRight = `${paddingRight + scrollbarWidth}px`;
+      window.LoveDaysViewport.lock(dialog);
     }
 
     function unlockScroll() {
-      if (!scrollState) return;
-      const saved = scrollState;
-      scrollState = null;
-      document.body.classList.remove('dialog-open');
-      saved.styles.forEach(([property, value, priority]) => {
-        if (value) document.body.style.setProperty(property, value, priority);
-        else document.body.style.removeProperty(property);
-      });
-
-      // Trả lại chính xác vị trí trước khi mở, kể cả khi trang bật cuộn mượt.
-      const root = document.documentElement;
-      const behavior = root.style.getPropertyValue('scroll-behavior');
-      const priority = root.style.getPropertyPriority('scroll-behavior');
-      root.style.setProperty('scroll-behavior', 'auto', 'important');
-      window.scrollTo({ left: saved.x, top: saved.y, behavior: 'instant' });
-      if (behavior) root.style.setProperty('scroll-behavior', behavior, priority);
-      else root.style.removeProperty('scroll-behavior');
+      window.LoveDaysViewport.unlock(dialog);
     }
 
     function addDetail(label, value) {
@@ -126,6 +95,7 @@
         try {
           dialog.showModal();
           closeButton.focus({ preventScroll: true });
+          window.LoveDaysViewport.refresh();
         } catch (error) {
           unlockScroll();
           activeTrigger = null;
@@ -186,6 +156,7 @@
     });
     dialog.addEventListener('pointercancel', () => { backdropPointer = null; });
     dialog.addEventListener('close', () => {
+      if (dialog.open) return;
       backdropPointer = null;
       unlockScroll();
       activeTrigger?.focus({ preventScroll: true });

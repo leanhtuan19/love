@@ -53,7 +53,6 @@
     const state = { csrf: '', posts: [], page: 0, hasMore: false, loading: false, listGeneration: 0, modalGeneration: 0, adminGeneration: 0, historyGeneration: 0, passwordConfigured: false, draft: null, saving: false, adminBusy: false, historyPage: 0, historyLoading: false };
     const dialogs = [modal, historyDialog, imageDialog, adminDialog];
     const opened = new Map();
-    let scrollState = null;
     let draftKey = 0;
     const adminAlive = (generation) => adminDialog.open && generation === state.adminGeneration;
     const historyAlive = (generation) => historyDialog.open && generation === state.historyGeneration;
@@ -81,48 +80,29 @@
       return data;
     }
 
-    function lockScroll() {
-      if (scrollState) return;
-      const body = document.body;
-      const properties = ['position', 'top', 'left', 'width', 'padding-right'];
-      const width = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
-      const padding = Number.parseFloat(getComputedStyle(body).paddingRight) || 0;
-      scrollState = { x: window.scrollX, y: window.scrollY, styles: properties.map((key) => [key, body.style.getPropertyValue(key), body.style.getPropertyPriority(key)]) };
-      body.classList.add('dialog-open');
-      Object.assign(body.style, { position: 'fixed', top: `${-scrollState.y}px`, left: `${-scrollState.x}px`, width: '100%' });
-      if (width) body.style.paddingRight = `${padding + width}px`;
-    }
-
-    function unlockScroll() {
-      if (!scrollState || dialogs.some((item) => item.open)) return;
-      const saved = scrollState;
-      scrollState = null;
-      document.body.classList.remove('dialog-open');
-      saved.styles.forEach(([key, value, priority]) => value ? document.body.style.setProperty(key, value, priority) : document.body.style.removeProperty(key));
-      const root = document.documentElement;
-      const behavior = root.style.getPropertyValue('scroll-behavior');
-      const priority = root.style.getPropertyPriority('scroll-behavior');
-      root.style.setProperty('scroll-behavior', 'auto', 'important');
-      window.scrollTo({ left: saved.x, top: saved.y, behavior: 'instant' });
-      if (behavior) root.style.setProperty('scroll-behavior', behavior, priority); else root.style.removeProperty('scroll-behavior');
-    }
-
     function openDialog(dialog, allowStack = false) {
       if (dialog.open) return true;
       if (!allowStack && document.querySelector('dialog[open]')) return false;
       opened.set(dialog, document.activeElement);
       if (dialog === adminDialog) state.adminGeneration += 1;
       if (dialog === historyDialog) state.historyGeneration += 1;
-      lockScroll();
-      try { dialog.showModal(); } catch (_) { opened.delete(dialog); unlockScroll(); return false; }
+      window.LoveDaysViewport.lock(dialog);
+      try { dialog.showModal(); } catch (_) { opened.delete(dialog); window.LoveDaysViewport.unlock(dialog); return false; }
       dialog.querySelector('input:not([type="hidden"]), [data-journal-close]')?.focus({ preventScroll: true });
+      window.LoveDaysViewport.refresh();
       return true;
+    }
+
+    function closeDialog(dialog) {
+      const focused = document.activeElement;
+      if (dialog.contains(focused) && focused.matches('input, textarea, select, [contenteditable]')) focused.blur();
+      dialog.close();
     }
 
     dialogs.forEach((dialog) => {
       const close = () => {
         if ((dialog === modal && state.saving) || (dialog === adminDialog && state.adminBusy)) return;
-        dialog.close();
+        closeDialog(dialog);
       };
       dialog.querySelector('[data-journal-close]').addEventListener('click', close);
       dialog.addEventListener('cancel', (event) => { event.preventDefault(); close(); });
@@ -135,6 +115,7 @@
         else if (!event.shiftKey && (document.activeElement === last || !focusable.includes(document.activeElement))) { event.preventDefault(); first.focus(); }
       });
       dialog.addEventListener('close', () => {
+        if (dialog.open) return;
         // Closing drops private DOM immediately. Late results must match the next
         // opening's generation before they are allowed to render anything.
         dialog.querySelectorAll('input[type="password"]').forEach((input) => { input.value = ''; });
@@ -144,7 +125,7 @@
         if (dialog === imageDialog) get('journal-large-image').removeAttribute('src');
         const trigger = opened.get(dialog);
         opened.delete(dialog);
-        unlockScroll();
+        window.LoveDaysViewport.unlock(dialog);
         if (trigger?.isConnected && !trigger.disabled) trigger.focus({ preventScroll: true });
       });
     });
@@ -317,7 +298,7 @@
       const authArea = node('div', 'journal-inline-auth');
       const actions = node('div', 'journal-actions');
       const submit = button(draft.id ? 'Lưu thay đổi ♡' : 'Đăng kỷ niệm ♡', 'journal-primary'); submit.type = 'submit';
-      const cancel = button('Bỏ bản nháp', 'journal-text-button', () => { if (state.saving || (draft.dirty && !window.confirm('Bỏ nội dung và ảnh chưa lưu?'))) return; const id = draft.id; clearDraft(); if (id) showPost(id); else modal.close(); });
+      const cancel = button('Bỏ bản nháp', 'journal-text-button', () => { if (state.saving || (draft.dirty && !window.confirm('Bỏ nội dung và ảnh chưa lưu?'))) return; const id = draft.id; clearDraft(); if (id) showPost(id); else closeDialog(modal); });
       actions.append(submit, cancel); form.append(actions); modalBody.append(form, authArea);
       function capture() {
         draft.authorName = form.elements.authorName.value; draft.title = form.elements.title.value; draft.content = form.elements.content.value;
@@ -402,7 +383,7 @@
       const form = passwordGate(modalBody, 'Nhập mật khẩu bảo vệ nhật ký để xác nhận xóa.', 'Xác nhận xóa', async (password) => {
         if (state.saving) return;
         state.saving = true;
-        try { await request(`/api/journal/${encodeURIComponent(post.id)}`, { method: 'DELETE', body: JSON.stringify({ password }) }); if (state.draft?.id === post.id) clearDraft(); modal.close(); loadPosts(); }
+        try { await request(`/api/journal/${encodeURIComponent(post.id)}`, { method: 'DELETE', body: JSON.stringify({ password }) }); if (state.draft?.id === post.id) clearDraft(); closeDialog(modal); loadPosts(); }
         catch (error) { announce(modalStatus, error.message, true); }
         finally { state.saving = false; }
       });

@@ -97,7 +97,6 @@
     let generation = 0;
     let detailGeneration = 0;
     let controller = null;
-    let scrollState = null;
     let lockTimer = null;
     let toastTimer = null;
     let imageKey = 0;
@@ -184,32 +183,11 @@
     }
 
     function lockScroll() {
-      const body = document.body;
-      const properties = ['position', 'top', 'left', 'width', 'padding-right'];
-      const scrollbarWidth = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
-      const padding = Number.parseFloat(window.getComputedStyle(body).paddingRight) || 0;
-      scrollState = { x: window.scrollX, y: window.scrollY, styles: properties.map((key) => [key, body.style.getPropertyValue(key), body.style.getPropertyPriority(key)]) };
-      body.classList.add('dialog-open');
-      body.style.position = 'fixed';
-      body.style.top = `${-scrollState.y}px`;
-      body.style.left = `${-scrollState.x}px`;
-      body.style.width = '100%';
-      if (scrollbarWidth) body.style.paddingRight = `${padding + scrollbarWidth}px`;
+      window.LoveDaysViewport.lock(dialog);
     }
 
     function unlockScroll() {
-      if (!scrollState) return;
-      const saved = scrollState;
-      scrollState = null;
-      document.body.classList.remove('dialog-open');
-      saved.styles.forEach(([key, value, priority]) => value ? document.body.style.setProperty(key, value, priority) : document.body.style.removeProperty(key));
-      const root = document.documentElement;
-      const behavior = root.style.getPropertyValue('scroll-behavior');
-      const priority = root.style.getPropertyPriority('scroll-behavior');
-      root.style.setProperty('scroll-behavior', 'auto', 'important');
-      window.scrollTo({ left: saved.x, top: saved.y, behavior: 'instant' });
-      if (behavior) root.style.setProperty('scroll-behavior', behavior, priority);
-      else root.style.removeProperty('scroll-behavior');
+      window.LoveDaysViewport.unlock(dialog);
     }
 
     function trapFocus(event) {
@@ -523,17 +501,21 @@
       lockScroll();
       try { dialog.showModal(); } catch (_) { state.open = false; unlockScroll(); return; }
       closeButton.focus({ preventScroll: true });
+      window.LoveDaysViewport.refresh();
       await loadSession(token);
     }
 
     function closeDialog(force = false) {
       if (mutationBusy() && !force) { announce('Đang lưu thay đổi. Chờ một chút trước khi đóng nhé.'); return; }
       if (!force && state.view === 'compose' && state.draft?.dirty && !window.confirm('Đóng hộp thư? Bản nháp được giữ tạm trong phiên này, đến khi tải lại trang.')) return;
+      const focused = document.activeElement;
+      if (dialog.contains(focused) && focused.matches('input, textarea, select, [contenteditable]')) focused.blur();
       if (lightbox.open) lightbox.close();
       if (dialog.open) dialog.close();
     }
 
     dialog.addEventListener('close', () => {
+      if (dialog.open) return;
       flushPendingActivity();
       scheduleCloseDeadline();
       resetTaps();
@@ -801,11 +783,23 @@
       lightboxImage.onload = () => { if (lightbox.open) lightboxStatus.textContent = ''; };
       lightboxImage.onerror = () => { if (lightbox.open) { lightboxImage.hidden = true; lightboxStatus.textContent = 'Chưa tải được ảnh. Hãy đóng rồi mở lại để thử lại.'; } };
       lightboxImage.src = imageUrl(image);
-      lightbox.showModal();
+      window.LoveDaysViewport.lock(lightbox);
+      try { lightbox.showModal(); } catch (_) {
+        window.LoveDaysViewport.unlock(lightbox);
+        lightboxImage.removeAttribute('src');
+        lightboxImage.onload = null;
+        lightboxImage.onerror = null;
+        lightboxStatus.textContent = '';
+        lightboxTrigger = null;
+        return;
+      }
       byId('lightbox-close').focus({ preventScroll: true });
+      window.LoveDaysViewport.refresh();
     }
     byId('lightbox-close').addEventListener('click', () => lightbox.close());
     lightbox.addEventListener('close', () => {
+      if (lightbox.open) return;
+      window.LoveDaysViewport.unlock(lightbox);
       lightboxImage.removeAttribute('src');
       lightboxImage.onload = null;
       lightboxImage.onerror = null;

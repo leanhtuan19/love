@@ -33,14 +33,16 @@
   align-items: center;
   justify-content: center;
   gap: 15px;
-  padding: 24px;
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: radial-gradient(ellipse at 35% 30%, #fbe0e9, transparent 60%), #fff6f8;
   color: #a23b63;
   opacity: 1;
   transition: opacity 260ms ease;
 }
 .love-loading.love-loading-out .love-loader { opacity: 0; pointer-events: none; }
-.love-loader__scene { position: relative; display: grid; place-items: center; width: 154px; height: 154px; margin-bottom: 4px; }
+.love-loader__scene { position: relative; display: grid; place-items: center; flex-shrink: 0; width: 154px; max-width: 100%; height: 154px; margin-bottom: 4px; }
 .love-loader__halo { position: absolute; inset: 8px; border-radius: 50%; background: radial-gradient(circle, #f4bfda66, transparent 70%); animation: love-loader-halo 2s ease-in-out infinite; }
 .love-loader__orbit { position: absolute; inset: 9px; border: 1px solid #deb5ca66; border-radius: 50%; }
 .love-loader__orbit::after { position: absolute; top: 16px; right: 13px; width: 6px; height: 6px; border-radius: 50%; background: #d591b2; box-shadow: 0 0 12px #db91b2aa; content: ""; }
@@ -50,8 +52,12 @@
 .love-loader__star--one { top: 10px; left: 11px; font-size: 26px; }
 .love-loader__star--two { bottom: 7px; right: 6px; font-size: 23px; animation-delay: -.7s; }
 .love-loader__star--three { bottom: 20px; left: 8px; font-size: 12px; animation-delay: -1.4s; }
-.love-loader > p { font-size: clamp(14px, 3.4vw, 17px); text-align: center; }
-.love-loader__caption { color: #9a7584; font-size: 10px; letter-spacing: .5px; text-align: center; }
+.love-loader > p { max-width: 100%; font-size: clamp(14px, 3.4vw, 17px); text-align: center; overflow-wrap: anywhere; }
+.love-loader__caption { max-width: 100%; color: #9a7584; font-size: 10px; letter-spacing: .5px; text-align: center; overflow-wrap: anywhere; }
+@media (max-height: 360px) and (orientation: landscape) {
+  .love-loading .love-loader { justify-content: flex-start; gap: 8px; }
+  .love-loader__scene { width: 112px; height: 112px; }
+}
 .love-loading .profile, .love-profiles-waiting .profile:not(.profile-love-done):not(.profile-love-enter) { opacity: 0; }
 
 /* One short entrance, followed by the existing profile interactions. */
