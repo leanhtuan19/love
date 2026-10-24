@@ -13,6 +13,7 @@
   <link rel="preload" href="fonts/Lora-Variable.ttf" as="font" type="font/ttf" crossorigin>
   <script src="main/js/loading.js"></script>
   <script src="main/js/mobile.js" defer></script>
+  <script src="main/js/media.js" defer></script>
   <script src="main/js/app.js" defer></script>
   <script src="main/js/profiles.js" defer></script>
   <script src="main/js/scroll.js" defer></script>
@@ -103,6 +104,10 @@
           </div>
         </div>
         <audio id="love-audio" src="main/music/nhactinhyeu.mp3" controls loop preload="metadata" aria-label="Trình phát nhạc tình yêu">Trình duyệt của bạn chưa hỗ trợ phát nhạc.</audio>
+        <div id="love-audio-controls" class="love-audio-controls" role="group" aria-label="Điều khiển nhạc tình yêu" hidden>
+          <div class="love-audio-progress"><label class="sr-only" for="love-audio-seek">Tua bản nhạc</label><input id="love-audio-seek" type="range" min="0" max="100" step="0.1" value="0" disabled><div class="love-audio-times"><time id="love-audio-current">0:00</time><span aria-hidden="true">♡</span><time id="love-audio-duration">--:--</time></div></div>
+          <button id="love-audio-mute" type="button" aria-pressed="false" aria-label="Tắt tiếng" title="Tắt tiếng"><span aria-hidden="true">♫</span><span data-mute-label>Tắt tiếng</span></button>
+        </div>
         <p id="music-status" role="status" aria-live="polite" aria-atomic="true"></p>
       </section>
     </section>

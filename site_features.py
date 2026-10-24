@@ -27,6 +27,8 @@ from flask import g, jsonify, request, send_file
 from itsdangerous import BadSignature
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from location_service import install_location, normalize_location
+
 
 VN = timezone(timedelta(hours=7))
 HASH_METHOD = "scrypt:32768:8:3"
@@ -70,9 +72,6 @@ class SiteStore:
         self.directory = auth.path.parent
         self.images = self.directory / "journal-images"
         self.images.mkdir(mode=0o700, exist_ok=True)
-        self.quota = int(app.config.get("JOURNAL_MAX_BYTES", os.environ.get("LOVEDAYS_JOURNAL_MAX_BYTES", 128 * 1024 * 1024)))
-        if self.quota <= 0:
-            raise ValueError("Journal quota must be positive")
         with auth.transaction() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS feature_migrations(version INTEGER PRIMARY KEY, applied REAL NOT NULL);
@@ -95,6 +94,9 @@ class SiteStore:
             for group, value in (("profiles", DEFAULT_PROFILES), ("content", DEFAULT_CONTENT), ("security", DEFAULT_SECURITY)):
                 db.execute("INSERT OR IGNORE INTO site_settings VALUES(?,?)", (group, compact(value)))
             db.execute("INSERT OR IGNORE INTO feature_migrations VALUES(1,?)", (now(),))
+            # Metadata stays compatible with old images; new attachments may be
+            # streamed image/video files in the shared private media directory.
+            db.execute("INSERT OR IGNORE INTO feature_migrations VALUES(2,?)", (now(),))
         # Never replace missing encryption keys when there are identities to decrypt.
         # Initialization is serialized across workers; each FileLock is newly constructed.
         with FileLock(str(self.directory / "feature-setup.lock"), timeout=15):
@@ -253,6 +255,7 @@ def install_features(app, auth, now, signer, core):
     store = SiteStore(app, auth, now, signer, core)
     app.extensions["site_features"] = store
     app.extensions["site_settings_reader"] = lambda: store.group("security")
+    install_location(app, store, core)
     admin_ttl, grant_ttl = 3600, 300
 
     @app.before_request
@@ -506,6 +509,8 @@ def install_features(app, auth, now, signer, core):
         result = deepcopy(post)
         for image in result["images"]:
             image.pop("storageKey", None)
+            image.pop("storageArea", None)
+            image.setdefault("kind", "image")
             image["url"] = "/api/journal/images/" + image["id"]
         return result
 
@@ -586,25 +591,17 @@ def install_features(app, auth, now, signer, core):
             if not core.valid_text(body.get(key), maximum) or (key != "content" and any(character in body[key] for character in "\r\n")):
                 raise core.ApiError(400, "invalid_post", "Vui lòng kiểm tra tên người đăng, tiêu đề và nội dung.")
             values[key] = body[key] if key == "content" else body[key].strip()
-        location = body.get("location", {"label": "", "latitude": None, "longitude": None})
-        if not isinstance(location, dict) or set(location) - {"label", "latitude", "longitude"}:
-            raise core.ApiError(400, "invalid_location", "Địa điểm chưa hợp lệ.")
-        label = text(location.get("label", ""), 240, True)
-        latitude, longitude = location.get("latitude"), location.get("longitude")
-        if (latitude is None) != (longitude is None):
-            raise core.ApiError(400, "invalid_location", "Cần cả vĩ độ và kinh độ hoặc nhập địa điểm thủ công.")
-        if latitude is not None and (type(latitude) not in (int, float) or type(longitude) not in (int, float) or not math.isfinite(latitude) or not math.isfinite(longitude) or not -90 <= latitude <= 90 or not -180 <= longitude <= 180):
-            raise core.ApiError(400, "invalid_location", "Tọa độ địa điểm không hợp lệ.")
-        values["location"] = {"label": label, "latitude": latitude, "longitude": longitude}
+        values["location"] = normalize_location(body.get("location", {"label": ""}), core)
         keep = body.get("keepImageIds")
-        if keep is not None and (not isinstance(keep, list) or len(keep) > core.MAX_IMAGES or any(not core.canonical_uuid(value) for value in keep) or len(set(keep)) != len(keep)):
+        if keep is not None and (not isinstance(keep, list) or any(not core.canonical_uuid(value) for value in keep) or len(set(keep)) != len(keep)):
             raise core.ApiError(400, "invalid_images", "Danh sách ảnh giữ lại không hợp lệ.")
-        if len(uploads) > core.MAX_IMAGES:
-            raise core.ApiError(400, "too_many_images", "Mỗi bài đăng tối đa 5 ảnh.")
+        upload_ids = body.get("uploadIds", [])
+        if not isinstance(upload_ids, list) or any(not core.canonical_uuid(value) for value in upload_ids) or len(set(upload_ids)) != len(upload_ids):
+            raise core.ApiError(400, "invalid_media", "Danh sách tệp đính kèm chưa hợp lệ.")
         expected = body.get("expectedUpdatedAt")
         if expected is not None and (not isinstance(expected, str) or len(expected) > 40):
             raise core.ApiError(400, "invalid_payload", "Mốc cập nhật không hợp lệ.")
-        return body, values, keep, uploads, expected
+        return body, values, keep, uploads, upload_ids, expected
 
     def actor():
         if g.admin_account:
@@ -627,8 +624,9 @@ def install_features(app, auth, now, signer, core):
     def save_post(post_id=None):
         if not post_id and not (g.authenticated or g.admin_account):
             raise core.ApiError(401, "posting_auth_required", "Mở khóa hòm thư hoặc đăng nhập quản trị trước khi đăng bài.")
-        body, values, keep, uploads, expected = parse_post()
+        body, values, keep, uploads, upload_ids, expected = parse_post()
         created = []
+        processed = []
         try:
             with auth.transaction() as db:
                 if post_id:
@@ -641,22 +639,26 @@ def install_features(app, auth, now, signer, core):
                     raise core.ApiError(409, "edit_conflict", "Bài đã được sửa ở nơi khác. Bản nháp vẫn được giữ; tải lại bài trước khi lưu.")
                 old = {image["id"]: image for image in before["images"]} if before else {}
                 keep = list(old) if keep is None else keep
-                if any(image_id not in old for image_id in keep) or len(keep) + len(uploads) > core.MAX_IMAGES:
-                    raise core.ApiError(400, "invalid_images", "Ảnh giữ lại phải thuộc bài này; tổng số ảnh tối đa 5.")
-                processed = [core.sanitize_upload(upload, values["title"]) for upload in uploads]
-                usage = sum(json.loads(item[0])["size"] for item in db.execute("SELECT metadata FROM journal_images"))
-                if usage + sum(len(encoded) for _, encoded in processed) > store.quota:
-                    raise core.ApiError(413, "journal_quota", "Kho ảnh nhật ký đã đạt giới hạn. Hãy sao lưu và liên hệ người quản trị máy chủ.")
+                if any(image_id not in old for image_id in keep):
+                    raise core.ApiError(400, "invalid_images", "Tệp giữ lại phải thuộc bài đang sửa.")
+                for upload in uploads:
+                    processed.append(core.sanitize_upload(upload, values["title"]))
+                media = app.extensions.get("media_uploads")
+                completed = media.resolve_uploads(upload_ids, "journal", db=db) if upload_ids else []
                 timestamp = advance(before["updatedAt"] if before else None)
                 post = {"id": post_id or str(uuid.uuid4()), **values, "createdAt": before["createdAt"] if before else timestamp,
                         "updatedAt": timestamp, "deletedAt": None,
-                        "images": [deepcopy(old[image_id]) for image_id in keep] + [metadata for metadata, _ in processed]}
+                        "images": [deepcopy(old[image_id]) for image_id in keep] + [metadata for metadata, _ in processed] + completed}
                 for order, image in enumerate(post["images"]):
                     image["order"] = order
                 for metadata, encoded in processed:
-                    core.atomic_write(store.images / metadata["storageKey"], encoded)
+                    core.write_attachment(store.images / metadata["storageKey"], encoded)
                     created.append(metadata["storageKey"])
                     db.execute("INSERT INTO journal_images VALUES(?,?,?)", (metadata["id"], post["id"], compact(metadata)))
+                for metadata in completed:
+                    db.execute("INSERT INTO journal_images VALUES(?,?,?)", (metadata["id"], post["id"], compact(metadata)))
+                if upload_ids:
+                    media.claim_uploads(upload_ids, "journal", post["id"], db=db)
                 db.execute("INSERT INTO journal_posts VALUES(?,?,0) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (post["id"], compact(post)))
                 if before:
                     history(db, before, post, "edit")
@@ -664,6 +666,8 @@ def install_features(app, auth, now, signer, core):
             for key in created:
                 (store.images / key).unlink(missing_ok=True)
             raise
+        finally:
+            core.discard_uploads(processed)
         return jsonify(post=public_post(post)), 200 if post_id else 201
 
     @app.delete("/api/journal/<post_id>")
@@ -715,16 +719,14 @@ def install_features(app, auth, now, signer, core):
             if not public and not (g.admin_account or g.history_allowed):
                 raise core.ApiError(401, "history_auth_required", "Ảnh chỉ còn trong lịch sử riêng tư. Vui lòng xác thực lại.")
             metadata = json.loads(row["metadata"])
-            path = store.images / metadata["storageKey"]
-            if not core.STORAGE_KEY.fullmatch(metadata["storageKey"]) or not path.is_file() or path.is_symlink():
-                raise core.ApiError(404, "not_found", "Không tìm thấy ảnh nhật ký.")
-            stream = path.open("rb")
-        try:
-            response = send_file(stream, mimetype=metadata["mimeType"], download_name="memory" + path.suffix, conditional=False, max_age=0)
-            response.call_on_close(stream.close)
-            return response
-        except BaseException:
-            stream.close()
-            raise
+            if metadata.get("storageArea") == "media":
+                path = app.extensions["media_uploads"].path(metadata)
+            else:
+                path = store.images / metadata["storageKey"]
+                if not core.STORAGE_KEY.fullmatch(metadata["storageKey"]) or not path.is_file() or path.is_symlink():
+                    raise core.ApiError(404, "not_found", "Không tìm thấy tệp nhật ký.")
+        # Passing a path permits conditional/Range responses for mobile video
+        # without buffering the complete attachment in the application process.
+        return send_file(path, mimetype=metadata["mimeType"], download_name="memory" + path.suffix, conditional=True, max_age=0)
 
     return store

@@ -1,12 +1,14 @@
 # Cấu hình và vận hành Love Days
 
+Ảnh/video gốc, upload chia phần, bản đồ, Geoapify và thanh nhạc mới: xem [MEDIA_MAPS_AUDIO.md](MEDIA_MAPS_AUDIO.md).
+
 Nhật ký, Cài đặt quản trị và cơ chế khóa 300/30 giây được mô tả trong [hướng dẫn nâng cấp](UPGRADE_SETTINGS_JOURNAL.md). Thư cũ tiếp tục dùng JSON; các bảng mới dùng auth.sqlite3 trong cùng kho riêng.
 
 ## Kiến trúc
 
 Website gốc là frontend tĩnh. Trình duyệt không thể tự ghi an toàn một JSON chung cho hai thiết bị hoặc giữ bí mật một mật khẩu được nhúng trong JavaScript. Bản này giữ nguyên frontend và bổ sung Flask, Waitress, Werkzeug, Pillow và filelock. Không dùng localStorage làm kho thư.
 
-Thư lưu trong một letters.json UTF-8. Ảnh nằm ở thư mục images riêng và JSON chỉ lưu metadata. SQLite chỉ lưu mật khẩu băm, phiên, CSRF và giới hạn thử mật khẩu; nội dung thư vẫn nằm trong JSON theo yêu cầu.
+Thư lưu trong một letters.json UTF-8. Ảnh/video nằm ở kho riêng và JSON chỉ lưu metadata. SQLite lưu xác thực, cài đặt, nhật ký/lịch sử, tiến trình upload và cache địa điểm; nội dung thư tiếp tục nằm trong JSON.
 
 ## Chạy trên máy này
 
@@ -90,15 +92,15 @@ Sao lưu toàn bộ kho cùng nhau, bao gồm JSON, ảnh, khóa và SQLite. Nê
 | Lần sai tự đóng/khóa | MAX_LOGIN_FAILURES trong create_app của server.py | 6, nghĩa là cho phép sai 5 lần |
 | Cửa sổ giới hạn nhập sai | LOGIN_WINDOW_SECONDS trong server.py | 900 giây |
 | Thời hạn phiên | SESSION_TTL_SECONDS trong server.py | 1800 giây, có giới hạn tuyệt đối |
-| Ảnh mỗi thư | MAX_IMAGES ở đầu server.py | 5 |
-| Dung lượng ảnh | MAX_IMAGE_BYTES ở đầu server.py | 5 × 1024 × 1024 byte |
-| Giới hạn giải mã ảnh | MAX_IMAGE_PIXELS ở đầu server.py | 12 triệu pixel, mỗi cạnh không quá 8000 |
+| Số lượng/dung lượng tệp đính kèm | Không áp giới hạn nghiệp vụ | Phụ thuộc hosting và dung lượng còn lại |
+| Kích thước một phần upload | CHUNK_BYTES trong media_uploads.py | 1 MiB, không phải dung lượng cả tệp |
+| Upload đồng thời | CONCURRENT_UPLOADS trong main/js/media.js | 2 tệp, không hạn chế tổng số tệp |
 | Mô tả người trong popup | Đối tượng profiles trong main/js/profiles.js | Tuấn và Thư theo thông tin đã cung cấp |
 | Danh sách ID người gửi/nhận | PEOPLE trong server.py | tuan, thu |
 | Dự phòng frontend khi chưa tải cấu hình | SECRET_CONFIG, DEFAULT_PEOPLE trong main/js/letters.js | Đồng bộ giá trị hiện tại |
 | Thời gian thoát loading dự phòng | FALLBACK_TIMEOUT_MS trong main/js/loading.js | 5000 ms |
 
-Frontend lấy giới hạn ảnh và danh sách người từ API/session. Thông báo backend cũng cần được cập nhật nếu thay các giới hạn hiển thị. Khởi động lại server sau khi sửa cấu hình Python.
+Frontend lấy giới hạn văn bản và danh sách người từ API/session. Các giá trị giới hạn số ảnh/dung lượng cũ hiện là null để tương thích API; không còn chặn theo các giá trị cũ. Khởi động lại server sau khi sửa cấu hình Python.
 
 Tên có thể trùng hoặc đổi, nhưng senderId/recipientId phải ổn định. Không đổi ID đã được dùng nếu chưa di chuyển dữ liệu liên quan. ID thư và ID ảnh do backend tạo UUID; frontend không dùng vị trí mảng làm ID.
 
@@ -110,7 +112,7 @@ Backend tự đặt UUID, createdAt và updatedAt ở UTC ISO 8601. Giao diện 
 
 Toàn bộ thao tác đọc–sửa–ghi JSON có khóa trong tiến trình và khóa file giữa các tiến trình. File tạm được ghi, flush, fsync rồi thay thế nguyên tử. Lưu mới đồng thời không làm mất thư. Chỉnh sửa gửi expectedUpdatedAt; nếu thư đã được sửa ở thiết bị khác, API trả 409 và giữ bản nháp để tránh ghi đè âm thầm. JSON hỏng trả 503 và giữ nguyên file, không tự biến thành danh sách rỗng.
 
-Ảnh được giải mã, xác minh rồi tạo lại từ pixel bằng Pillow; không giữ mã đuôi, EXIF hoặc dùng trực tiếp tên người upload làm tên lưu. Chỉ nhận JPEG/PNG/WebP đơn khung hình. Khi lưu thất bại, các ảnh mới đã ghi được thu hồi; xóa thư hoặc gỡ ảnh sẽ xóa tham chiếu và file tương ứng. Kiểm tra log nếu hệ điều hành từ chối xóa file. Bản nháp lỗi được giữ trong RAM của tab, gồm ảnh đã chọn; tải lại hoặc đóng hẳn tab có thể mất bản nháp chưa lưu.
+Ảnh JPEG/PNG/WebP và video MP4/WebM mới được xác minh định dạng thực tế, giữ nguyên byte gốc, tên lưu sinh riêng. Tệp hoàn tất qua hàng đợi được giữ khi lưu lỗi để thử lại; xóa thư hoặc gỡ tệp sẽ xóa tham chiếu và file tương ứng. Media nhật ký cũ vẫn được giữ riêng cho lịch sử. Bản nháp lỗi và File chưa lưu nằm trong RAM của tab; tải lại hoặc đóng tab có thể mất bản nháp. Xem hướng dẫn media cho retry, Range và CLI dọn upload chưa dùng.
 
 ## API và quyền
 

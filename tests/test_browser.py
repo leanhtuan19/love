@@ -142,7 +142,8 @@ class BrowserTests(unittest.TestCase):
 
     def compose(self, page, title, recipient="thu", images=None):
         page.locator("#secret-new").click()
-        page.locator("#secret-recipient").select_option(recipient)
+        page.locator("#secret-sender").select_option("tuan" if recipient == "thu" else "thu")
+        self.assertEqual(page.locator("#secret-recipient").input_value(), recipient)
         page.locator("#secret-title").fill(title)
         page.locator("#secret-content").fill("Nội dung kiểm thử.\n<script>window.__executed=true</script>")
         if images:

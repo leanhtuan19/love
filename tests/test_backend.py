@@ -16,7 +16,7 @@ import zlib
 from PIL import Image
 from werkzeug.security import generate_password_hash
 
-from server import create_app, MAX_IMAGE_BYTES, ROOT
+from server import create_app, ROOT
 
 
 class BackendTests(unittest.TestCase):
@@ -192,7 +192,7 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(self.create(self.payload(**change)).status_code, 400, change)
         self.assertEqual(self.client.get("/api/letters").get_json()["letters"], [])
 
-    def test_all_supported_image_formats_are_decoded_and_reencoded(self):
+    def test_all_supported_image_formats_are_verified_and_preserved(self):
         self.login()
         uploads = [(io.BytesIO(self.image_data(format)), "sample" + extension, mime) for format, extension, mime in (("JPEG", ".jpg", "image/jpeg"), ("PNG", ".png", "image/png"), ("WEBP", ".webp", "image/webp"))]
         response = self.create(images=uploads)
@@ -213,7 +213,7 @@ class BackendTests(unittest.TestCase):
             outsider = self.app.test_client().get(public["url"])
             self.assertEqual(outsider.status_code, 401)
 
-    def test_trailing_payload_and_exif_are_not_served(self):
+    def test_original_bytes_and_exif_preserved_with_non_executable_mime(self):
         self.login()
         image = Image.new("RGB", (8, 8), "pink")
         exif = Image.Exif()
@@ -224,32 +224,32 @@ class BackendTests(unittest.TestCase):
         response = self.create(images=[(io.BytesIO(uploaded), "photo.jpg", "image/jpeg")])
         self.assertEqual(response.status_code, 201)
         public_image = self.client.get(response.get_json()["letter"]["images"][0]["url"])
-        self.assertNotIn(b"trailing-payload", public_image.data)
-        self.assertNotIn(b"sensitive-camera-metadata", public_image.data)
-        self.assertFalse(Image.open(io.BytesIO(public_image.data)).getexif())
+        self.assertEqual(public_image.data, uploaded)
+        self.assertEqual(public_image.mimetype, "image/jpeg")
+        self.assertEqual(public_image.headers["X-Content-Type-Options"], "nosniff")
+        self.assertTrue(Image.open(io.BytesIO(public_image.data)).getexif())
         public_image.close()
 
-    def test_fake_malformed_oversized_and_too_many_uploads_rejected(self):
+    def test_fake_and_malformed_uploads_rejected_without_arbitrary_count_limit(self):
         self.login()
         cases = [([(io.BytesIO(b"<svg>not a raster image</svg>"), "fake.png", "image/png")], 400),
                  ([(io.BytesIO(self.image_data()), "wrong.jpg", "image/jpeg")], 400),
-                 ([(io.BytesIO(self.image_data()[:20]), "broken.png", "image/png")], 400),
-                 ([(io.BytesIO(b"x" * (MAX_IMAGE_BYTES + 1)), "large.png", "image/png")], 413),
-                 ([(io.BytesIO(self.image_data()), "photo.png", "image/png") for _ in range(6)], 400)]
+                 ([(io.BytesIO(self.image_data()[:20]), "broken.png", "image/png")], 400)]
         for uploads, expected in cases:
             response = self.create(images=uploads)
             self.assertEqual(response.status_code, expected, response.get_json())
         self.assertEqual(list(self.app.extensions["letter_store"].images.iterdir()), [])
+        response = self.create(images=[(io.BytesIO(self.image_data()), "photo.png", "image/png") for _ in range(7)])
+        self.assertEqual(response.status_code, 201, response.get_json())
+        self.assertEqual(len(response.get_json()["letter"]["images"]), 7)
 
-    def test_decompression_bomb_dimensions_rejected_before_pixel_allocation(self):
+    def test_corrupt_image_chunk_checksums_rejected_before_publication(self):
         self.login()
         raw = bytearray(self.image_data())
-        # Replace only PNG IHDR dimensions and CRC; no huge bitmap is allocated by the test.
-        raw[16:24] = struct.pack(">II", 100000, 100000)
-        raw[29:33] = struct.pack(">I", zlib.crc32(raw[12:29]) & 0xFFFFFFFF)
+        raw[29:33] = b"\0\0\0\0"
         response = self.create(images=[(io.BytesIO(raw), "huge.png", "image/png")])
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.get_json()["error"], "invalid_image")
+        self.assertEqual(response.get_json()["error"], "invalid_media")
         self.assertEqual(list(self.app.extensions["letter_store"].images.iterdir()), [])
 
     def test_forged_session_cookie_never_authenticates(self):

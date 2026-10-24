@@ -256,12 +256,57 @@
     const musicSection = document.getElementById('music');
     const musicButton = document.getElementById('music-toggle');
     const musicLabel = musicButton?.querySelector('[data-music-label]');
+    const audioControls = document.getElementById('love-audio-controls');
+    const seek = document.getElementById('love-audio-seek');
+    const currentTime = document.getElementById('love-audio-current');
+    const durationTime = document.getElementById('love-audio-duration');
+    const mute = document.getElementById('love-audio-mute');
     if (audio && musicButton) {
       musicButton.disabled = false;
       let pending = false;
       let playing = false;
       let playAttempt = 0;
       const setMusicStatus = (message) => updateStatus(musicStatus, message);
+      const formatTime = (seconds) => {
+        if (!Number.isFinite(seconds) || seconds < 0) return '--:--';
+        const whole = Math.floor(seconds);
+        const hours = Math.floor(whole / 3600);
+        return hours ? `${hours}:${pad(Math.floor(whole / 60) % 60)}:${pad(whole % 60)}` : `${Math.floor(whole / 60)}:${pad(whole % 60)}`;
+      };
+      const renderTimeline = () => {
+        if (!seek) return;
+        const known = Number.isFinite(audio.duration) && audio.duration > 0;
+        const position = Number.isFinite(audio.currentTime) ? Math.max(0, audio.currentTime) : 0;
+        seek.disabled = !known;
+        seek.max = known ? String(audio.duration) : '100';
+        seek.value = String(known ? Math.min(position, audio.duration) : 0);
+        seek.setAttribute('aria-valuetext', known ? `${formatTime(position)} / ${formatTime(audio.duration)}` : 'Đang chờ thông tin thời lượng');
+        seek.style.setProperty('--audio-progress', `${known ? Math.min(100, position / audio.duration * 100) : 0}%`);
+        if (currentTime) currentTime.textContent = formatTime(position);
+        if (durationTime) durationTime.textContent = known ? formatTime(audio.duration) : '--:--';
+      };
+      if (audioControls && seek && mute) {
+        audioControls.hidden = false;
+        audio.controls = false;
+        musicSection?.classList.add('has-custom-controls');
+        seek.addEventListener('input', () => {
+          if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+          try { audio.currentTime = Math.max(0, Math.min(Number(seek.value), audio.duration)); }
+          catch (_) { setMusicStatus('Chưa tua được bản nhạc. Hãy chờ nhạc tải thêm rồi thử lại.'); }
+          renderTimeline();
+        });
+        const renderMute = () => {
+          const muted = audio.muted;
+          mute.setAttribute('aria-pressed', String(muted));
+          mute.setAttribute('aria-label', muted ? 'Bật tiếng' : 'Tắt tiếng');
+          mute.title = muted ? 'Bật tiếng' : 'Tắt tiếng';
+          mute.querySelector('[data-mute-label]').textContent = muted ? 'Bật tiếng' : 'Tắt tiếng';
+        };
+        mute.addEventListener('click', () => { audio.muted = !audio.muted; renderMute(); });
+        audio.addEventListener('volumechange', renderMute);
+        ['loadedmetadata', 'durationchange', 'timeupdate', 'seeking', 'seeked', 'emptied', 'ended', 'error'].forEach((name) => audio.addEventListener(name, renderTimeline));
+        renderTimeline(); renderMute();
+      }
       const renderMusicState = () => {
         const active = !audio.paused || pending;
         const label = active ? 'Tạm dừng' : 'Bật nhạc';

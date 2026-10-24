@@ -6,6 +6,7 @@ Letters and attachments always live outside the web root. No default password ex
 from __future__ import annotations
 
 import argparse
+import errno
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -30,7 +31,7 @@ import uuid
 import warnings
 
 from filelock import FileLock, Timeout as FileLockTimeout
-from flask import Flask, g, jsonify, request, send_file
+from flask import Flask, g, has_request_context, jsonify, request, send_file
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.exceptions import HTTPException
@@ -44,16 +45,17 @@ PEOPLE = [
 ]
 PERSON_NAMES = {person["id"]: person["name"] for person in PEOPLE}
 LETTER_TYPES = {"diary", "love-letter", "message"}
-MAX_IMAGES = 5
-MAX_IMAGE_BYTES = 5 * 1024 * 1024
-MAX_IMAGE_PIXELS = 12_000_000
+# Compatibility names remain importable; these no longer impose upload limits.
+MAX_IMAGES = None
+MAX_IMAGE_BYTES = None
+MAX_IMAGE_PIXELS = None
 LIMITS = {"maxImages": MAX_IMAGES, "maxImageBytes": MAX_IMAGE_BYTES,
           "maxTitleLength": 160, "maxContentLength": 20000, "maxNameLength": 80}
 PUBLIC_FILES = {
     "index.html", "main/css/style.css", "main/css/effects.css", "main/css/letters.css",
     "main/js/app.js", "main/js/profiles.js", "main/js/scroll.js",
     "main/js/loading.js", "main/js/letters.js", "main/js/mobile.js",
-    "main/js/site-config.js", "main/js/journal.js", "main/css/journal.css",
+    "main/js/site-config.js", "main/js/journal.js", "main/js/media.js", "main/css/journal.css",
     "fonts/Lora-Variable.ttf", "fonts/OFL-Lora.txt",
 }
 PUBLIC_ALIASES = {
@@ -64,7 +66,7 @@ PUBLIC_ALIASES = {
 }
 IMAGE_FORMATS = {"JPEG": ("image/jpeg", ".jpg"), "PNG": ("image/png", ".png"),
                  "WEBP": ("image/webp", ".webp")}
-STORAGE_KEY = re.compile(r"^[0-9a-f]{32}\.(?:jpg|png|webp)$")
+STORAGE_KEY = re.compile(r"^[0-9a-f]{32}\.(?:jpg|png|webp|mp4|webm)$")
 OPAQUE_ID = re.compile(r"^[A-Za-z0-9_-]{43}$")
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
@@ -195,7 +197,7 @@ class LetterStore:
                 if not isinstance(letter.get(field), str) or not letter[field].endswith("Z"):
                     raise ValueError("Invalid timestamp")
                 datetime.fromisoformat(letter[field].replace("Z", "+00:00"))
-            if not isinstance(letter.get("images"), list) or len(letter["images"]) > MAX_IMAGES:
+            if not isinstance(letter.get("images"), list):
                 raise ValueError("Invalid image collection")
             for order, image in enumerate(letter["images"]):
                 if not isinstance(image, dict) or not canonical_uuid(image.get("id")) or image["id"] in image_ids:
@@ -205,9 +207,9 @@ class LetterStore:
                 if not isinstance(key, str) or not STORAGE_KEY.fullmatch(key) or key in keys:
                     raise ValueError("Invalid storage key")
                 keys.add(key)
-                if image.get("mimeType") not in {value[0] for value in IMAGE_FORMATS.values()}:
+                if image.get("mimeType") not in {"image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm"}:
                     raise ValueError("Invalid image type")
-                if type(image.get("size")) is not int or not 0 < image["size"] <= MAX_IMAGE_BYTES:
+                if type(image.get("size")) is not int or image["size"] <= 0:
                     raise ValueError("Invalid image size")
                 if type(image.get("order")) is not int or image["order"] != order:
                     raise ValueError("Invalid image order")
@@ -222,7 +224,8 @@ class LetterStore:
     def remove_images(self, images):
         for image in images:
             try:
-                (self.images / image["storageKey"]).unlink(missing_ok=True)
+                directory = self.directory / "media" if image.get("storageArea") == "media" else self.images
+                (directory / image["storageKey"]).unlink(missing_ok=True)
             except OSError:
                 logging.getLogger(__name__).warning("Attachment cleanup deferred: %s", image["id"])
 
@@ -294,53 +297,65 @@ class AuthStore:
             db.execute("DELETE FROM sessions")
 
 
-def sanitize_upload(upload, title):
-    raw = upload.stream.read(MAX_IMAGE_BYTES + 1)
-    if len(raw) > MAX_IMAGE_BYTES:
-        raise ApiError(413, "image_too_large", "Mỗi ảnh được tối đa 5 MB.")
-    filename = (upload.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
-    filename = "".join(character for character in filename if character.isprintable()).strip()[:180]
-    suffix = Path(filename).suffix.lower()
-    if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
-        raise ApiError(400, "invalid_image", "Chỉ nhận ảnh JPEG, PNG hoặc WebP.")
+class OriginalUpload:
+    """Disk-backed legacy multipart attachment; never keep all media in RAM."""
+    def __init__(self, path):
+        self.path = Path(path)
+
+    def __len__(self):
+        return self.path.stat().st_size
+
+
+def discard_uploads(processed):
+    for _, content in processed:
+        if isinstance(content, OriginalUpload):
+            content.path.unlink(missing_ok=True)
+
+
+def write_attachment(path, content):
+    if not isinstance(content, OriginalUpload):
+        atomic_write(path, content)
+        return
+    temporary = path.parent / (".pending-" + uuid.uuid4().hex)
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(io.BytesIO(raw), formats=tuple(IMAGE_FORMATS)) as source:
-                detected = source.format
-                if detected not in IMAGE_FORMATS or source.width * source.height > MAX_IMAGE_PIXELS or max(source.size) > 8000:
-                    raise ValueError("Image dimensions exceed limit")
-                mime, extension = IMAGE_FORMATS[detected]
-                allowed_suffixes = {".jpg", ".jpeg"} if detected == "JPEG" else {extension}
-                if suffix not in allowed_suffixes or upload.mimetype not in (mime, "application/octet-stream"):
-                    raise ValueError("Image format does not match its declared type")
-                if getattr(source, "n_frames", 1) != 1:
-                    raise ValueError("Animated images are not supported")
-                source.verify()
-            with Image.open(io.BytesIO(raw), formats=tuple(IMAGE_FORMATS)) as source:
-                source.load()
-                oriented = ImageOps.exif_transpose(source)
-                mode = "RGB" if detected == "JPEG" else ("RGBA" if "A" in oriented.getbands() or "transparency" in oriented.info else "RGB")
-                # A fresh pixel-only image omits EXIF, XMP, comments, profiles and trailing payloads.
-                clean = Image.new(mode, oriented.size)
-                clean.paste(oriented.convert(mode))
-                output = io.BytesIO()
-                options = {"quality": 88} if detected in ("JPEG", "WEBP") else {"compress_level": 6}
-                clean.save(output, format=detected, **options)
-                encoded = output.getvalue()
-                width, height = clean.size
-                clean.close()
-        if not encoded or len(encoded) > MAX_IMAGE_BYTES:
-            raise ApiError(413, "image_too_large", "Ảnh sau xử lý vượt 5 MB. Hãy chọn ảnh nhỏ hơn.")
-    except ApiError:
+        with content.path.open("rb") as source, temporary.open("xb") as destination:
+            while True:
+                chunk = source.read(65536)
+                if not chunk:
+                    break
+                destination.write(chunk)
+            destination.flush()
+            os.fsync(destination.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def sanitize_upload(upload, title):
+    from media_uploads import inspect_media, safe_filename
+    filename = safe_filename(upload.filename)
+    handle, temporary = tempfile.mkstemp(prefix="lovedays-media-")
+    path = Path(temporary)
+    try:
+        with os.fdopen(handle, "wb") as destination:
+            while True:
+                chunk = upload.stream.read(65536)
+                if not chunk:
+                    break
+                destination.write(chunk)
+        details, extension = inspect_media(path, filename, upload.mimetype, sys.modules[__name__])
+        metadata = {"id": str(uuid.uuid4()), "storageKey": uuid.uuid4().hex + extension,
+                    "originalName": filename, "size": path.stat().st_size,
+                    "alt": ("Tệp đính kèm: " + title)[:240], "order": 0, **details}
+        result = (metadata, OriginalUpload(path))
+        if has_request_context():
+            if not hasattr(g, "temporary_uploads"):
+                g.temporary_uploads = []
+            g.temporary_uploads.append(result)
+        return result
+    except BaseException:
+        path.unlink(missing_ok=True)
         raise
-    except (UnidentifiedImageError, OSError, ValueError, SyntaxError, Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
-        raise ApiError(400, "invalid_image", "Ảnh không hợp lệ, bị hỏng hoặc có kích thước quá lớn.") from exc
-    image_id = str(uuid.uuid4())
-    metadata = {"id": image_id, "storageKey": uuid.uuid4().hex + extension,
-                "originalName": filename, "mimeType": mime, "size": len(encoded),
-                "alt": ("Ảnh đính kèm: " + title)[:240], "order": 0, "width": width, "height": height}
-    return metadata, encoded
 
 
 def create_app(test_config=None):
@@ -354,8 +369,8 @@ def create_app(test_config=None):
         PUBLIC_ORIGIN=os.environ.get("LOVEDAYS_PUBLIC_ORIGIN") or os.environ.get("RENDER_EXTERNAL_URL"),
         SESSION_TTL_SECONDS=1800, MAILBOX_IDLE_SECONDS=300, MAILBOX_CLOSE_SECONDS=30,
         LOGIN_WINDOW_SECONDS=900, MAX_LOGIN_FAILURES=6,
-        TIME_PROVIDER=time.time, MAX_CONTENT_LENGTH=MAX_IMAGES * MAX_IMAGE_BYTES + 512 * 1024,
-        MAX_FORM_MEMORY_SIZE=128 * 1024, MAX_FORM_PARTS=12,
+        TIME_PROVIDER=time.time, MAX_CONTENT_LENGTH=None,
+        MAX_FORM_MEMORY_SIZE=128 * 1024, MAX_FORM_PARTS=None,
     )
     if test_config:
         app.config.update(test_config)
@@ -374,6 +389,10 @@ def create_app(test_config=None):
     store = LetterStore(data_dir)
     auth = AuthStore(data_dir, app.config["PASSWORD_HASH"], app.config["SQLITE_JOURNAL_MODE"])
     app.extensions.update(letter_store=store, auth_store=auth)
+
+    @app.teardown_request
+    def remove_temporary_uploads(error=None):
+        discard_uploads(getattr(g, "temporary_uploads", []))
 
     def now():
         return float(app.config["TIME_PROVIDER"]())
@@ -506,7 +525,7 @@ def create_app(test_config=None):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
         if request.is_secure:
             response.headers["Strict-Transport-Security"] = "max-age=31536000"
         if request.path.startswith("/api/"):
@@ -535,6 +554,12 @@ def create_app(test_config=None):
 
     @app.errorhandler(Exception)
     def unexpected_error(error):
+        disk_full = (isinstance(error, OSError) and error.errno in {errno.ENOSPC, getattr(errno, "EDQUOT", -1)})
+        sqlite_full = (isinstance(error, sqlite3.Error) and (
+            getattr(error, "sqlite_errorcode", None) == getattr(sqlite3, "SQLITE_FULL", 13)
+            or "database or disk is full" in str(error).lower()))
+        if disk_full or sqlite_full:
+            return jsonify(error="storage_full", message="Máy chủ đã hết dung lượng. Các tệp đã tải thành công vẫn được giữ. Hãy giải phóng dung lượng hoặc nâng cấp kho lưu trữ rồi thử lại."), 507
         if isinstance(error, HTTPException):
             if request.path.startswith("/api/"):
                 message = "Yêu cầu quá lớn. Tối đa 5 ảnh, mỗi ảnh 5 MB." if error.code == 413 else "Yêu cầu không hợp lệ hoặc không tìm thấy."
@@ -625,7 +650,7 @@ def create_app(test_config=None):
 
     def public_letter(letter):
         result = dict(letter)
-        result["images"] = [{**{key: value for key, value in image.items() if key != "storageKey"}, "url": "/api/images/" + image["id"]} for image in letter["images"]]
+        result["images"] = [{**{key: value for key, value in image.items() if key not in {"storageKey", "storageArea"}}, "url": "/api/images/" + image["id"]} for image in letter["images"]]
         return result
 
     def parse_letter_input():
@@ -648,6 +673,8 @@ def create_app(test_config=None):
             raise ApiError(400, "invalid_payload", "Mốc cập nhật của thư không hợp lệ.")
         if any(not isinstance(body.get(field), str) for field in ("senderId", "recipientId", "type")) or body["senderId"] not in PERSON_NAMES or body["recipientId"] not in PERSON_NAMES or body["type"] not in LETTER_TYPES:
             raise ApiError(400, "invalid_letter", "Người gửi, người nhận hoặc loại thư không hợp lệ.")
+        if body["senderId"] == body["recipientId"]:
+            raise ApiError(400, "invalid_recipient", "Người nhận phải là người còn lại trong hai bạn.")
         person_names = {person["id"]: person["name"] for person in current_people()}
         values = {"senderId": body["senderId"], "recipientId": body["recipientId"], "type": body["type"], "recipientName": person_names[body["recipientId"]]}
         for field, maximum in (("senderName", 80), ("title", 160), ("content", 20000)):
@@ -656,12 +683,12 @@ def create_app(test_config=None):
                 raise ApiError(400, "invalid_letter", "Tên người gửi, tiêu đề hoặc nội dung chưa hợp lệ.")
             values[field] = value.strip() if field != "content" else value
         keep = body.get("keepImageIds")
-        if keep is not None and (not isinstance(keep, list) or len(keep) > MAX_IMAGES or any(not canonical_uuid(item) for item in keep) or len(set(keep)) != len(keep)):
+        if keep is not None and (not isinstance(keep, list) or any(not canonical_uuid(item) for item in keep) or len(set(keep)) != len(keep)):
             raise ApiError(400, "invalid_images", "Danh sách ảnh giữ lại không hợp lệ.")
-        if len(uploads) > MAX_IMAGES:
-            raise ApiError(400, "too_many_images", "Mỗi thư được đính kèm tối đa 5 ảnh.")
         processed = [sanitize_upload(upload, values["title"]) for upload in uploads]
-        return values, keep, processed, expected_updated_at
+        upload_ids = body.get("uploadIds", [])
+        app.extensions["media_uploads"].resolve_uploads(upload_ids, "letters")
+        return values, keep, processed, expected_updated_at, upload_ids
 
     @app.get("/api/letters")
     @authenticated
@@ -685,8 +712,8 @@ def create_app(test_config=None):
     @app.route("/api/letters/<letter_id>", methods=["PUT"])
     @authenticated
     def save_letter(letter_id=None):
-        values, keep, processed, expected_updated_at = parse_letter_input()
-        with store.locked():
+        values, keep, processed, expected_updated_at, upload_ids = parse_letter_input()
+        with store.locked(), auth.transaction() as upload_db:
             data = store.read()
             existing = next((item for item in data["letters"] if item["id"] == letter_id), None) if letter_id else None
             if letter_id and existing is None:
@@ -699,26 +726,26 @@ def create_app(test_config=None):
             by_id = {image["id"]: image for image in old_images}
             if any(image_id not in by_id for image_id in keep):
                 raise ApiError(400, "invalid_images", "Ảnh giữ lại phải thuộc chính bức thư này.")
-            if len(keep) + len(processed) > MAX_IMAGES:
-                raise ApiError(400, "too_many_images", "Tổng số ảnh giữ lại và ảnh mới được tối đa 5.")
+            completed = app.extensions["media_uploads"].resolve_uploads(upload_ids, "letters", db=upload_db)
             timestamp = utc_timestamp(now())
             if existing and timestamp <= existing["updatedAt"]:
                 previous = datetime.fromisoformat(existing["updatedAt"].replace("Z", "+00:00"))
                 timestamp = (previous + timedelta(milliseconds=1)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
             letter = {"id": existing["id"] if existing else str(uuid.uuid4()), **values,
                       "createdAt": existing["createdAt"] if existing else timestamp, "updatedAt": timestamp,
-                      "images": [dict(by_id[image_id]) for image_id in keep] + [metadata for metadata, _ in processed]}
+                      "images": [dict(by_id[image_id]) for image_id in keep] + [metadata for metadata, _ in processed] + completed}
             for order, image in enumerate(letter["images"]):
                 image["order"] = order
             created_images = []
             try:
                 for metadata, encoded in processed:
-                    atomic_write(store.images / metadata["storageKey"], encoded)
+                    write_attachment(store.images / metadata["storageKey"], encoded)
                     created_images.append(metadata)
                 if existing:
                     data["letters"][data["letters"].index(existing)] = letter
                 else:
                     data["letters"].append(letter)
+                app.extensions["media_uploads"].claim_uploads(upload_ids, "letters", letter["id"], db=upload_db)
                 store.write(data)
             except BaseException:
                 store.remove_images(created_images)
@@ -747,18 +774,13 @@ def create_app(test_config=None):
             metadata = next((image for letter in data["letters"] for image in letter["images"] if image["id"] == image_id), None)
             if not metadata:
                 raise ApiError(404, "not_found", "Không tìm thấy ảnh đính kèm.")
-            path = store.images / metadata["storageKey"]
+            path = (app.extensions["media_uploads"].path(metadata) if metadata.get("storageArea") == "media"
+                    else store.images / metadata["storageKey"])
             if not path.is_file() or path.is_symlink():
                 raise ApiError(404, "not_found", "Không tìm thấy ảnh đính kèm.")
-            # Open under the lock so a concurrent delete cannot expose or substitute another file.
-            stream = path.open("rb")
-        try:
-            response = send_file(stream, mimetype=metadata["mimeType"], download_name="attachment" + path.suffix, conditional=False, max_age=0)
-            response.call_on_close(stream.close)
-            return response
-        except BaseException:
-            stream.close()
-            raise
+            # send_file opens the descriptor while the storage lock is held;
+            # path-backed conditional responses support video byte ranges.
+            return send_file(path, mimetype=metadata["mimeType"], download_name="attachment" + path.suffix, conditional=True, max_age=0)
 
     @app.get("/")
     @app.get("/<path:resource>")
@@ -798,6 +820,8 @@ def create_app(test_config=None):
 
     from site_features import install_features
     install_features(app, auth, now, signer, sys.modules[__name__])
+    from media_uploads import install_uploads
+    install_uploads(app, auth, now, sys.modules[__name__])
     return app
 
 
@@ -807,11 +831,21 @@ def main():
     commands.add_parser("init-password", help="Set or replace the private password interactively")
     commands.add_parser("setup-admins", help="Initialize administrator accounts without overwriting existing accounts")
     commands.add_parser("migrate", help="Apply safe, idempotent schema and content migrations")
+    cleanup_parser = commands.add_parser("cleanup-uploads", help="Explicitly remove old unclaimed upload drafts; linked media is always protected")
+    cleanup_parser.add_argument("--older-than-days", type=float, default=7)
+    cleanup_parser.add_argument("--dry-run", action="store_true")
     serve_parser = commands.add_parser("serve", help="Run the Waitress WSGI server")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", default=8001, type=int)
     args = parser.parse_args()
     app = create_app()
+    if args.command == "cleanup-uploads":
+        try:
+            result = app.extensions["media_uploads"].cleanup(args.older_than_days, args.dry_run)
+        except ValueError as error:
+            parser.error(str(error))
+        print(json.dumps(result))
+        return
     if args.command in {"setup-admins", "migrate"}:
         from site_features import setup_admins, migrate
         (setup_admins if args.command == "setup-admins" else migrate)(app)
@@ -830,7 +864,7 @@ def main():
     host, port = getattr(args, "host", "127.0.0.1"), getattr(args, "port", 8001)
     print(f"Love Days: http://{host}:{port}")
     print("Private letter storage is outside the public project directory.")
-    serve(app, host=host, port=port, threads=4, max_request_body_size=app.config["MAX_CONTENT_LENGTH"], channel_timeout=30)
+    serve(app, host=host, port=port, threads=4, max_request_body_size=0x7fffffffffffffff, channel_timeout=30)
 
 
 if __name__ == "__main__":

@@ -361,6 +361,21 @@ h1 {
 #music-toggle .pause-icon, #music-toggle[aria-pressed="true"] .play-icon { display: none; }
 #music-toggle[aria-pressed="true"] .pause-icon { display: block; }
 #love-audio { display: block; width: 100%; min-width: 0; height: 38px; margin-top: 19px; border-radius: 20px; }
+.has-custom-controls #love-audio { display: none; }
+.love-audio-controls { display: flex; align-items: center; gap: 15px; margin-top: 19px; padding: 13px 16px; border: 1px solid #ecd2de; border-radius: 17px; background: linear-gradient(140deg, #fffdfb, #fbeaf2); box-shadow: inset 0 1px #fff; }
+.love-audio-controls[hidden] { display: none; }
+.love-audio-progress { flex: 1; min-width: 0; }
+#love-audio-seek { display: block; width: 100%; min-width: 0; height: 44px; margin: 0; padding: 0; accent-color: #b2527c; cursor: pointer; background: transparent; }
+#love-audio-seek:disabled { cursor: wait; opacity: .5; }
+#love-audio-seek::-webkit-slider-runnable-track { height: 5px; border-radius: 9px; background: linear-gradient(to right, #bd6188 var(--audio-progress, 0%), #ead5df var(--audio-progress, 0%)); }
+#love-audio-seek::-webkit-slider-thumb { margin-top: -5px; }
+#love-audio-seek::-moz-range-track { height: 5px; border-radius: 9px; background: #ead5df; }
+#love-audio-seek::-moz-range-progress { height: 5px; border-radius: 9px; background: #bd6188; }
+.love-audio-times { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #91697e; font-size: 11px; font-variant-numeric: tabular-nums; }
+.love-audio-times > span { color: #bf7e9d; }
+#love-audio-mute { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 7px; min-width: 0; max-width: 100%; min-height: 44px; padding: 9px 12px; border: 1px solid #e3bfd1; border-radius: 12px; color: #a04a71; background: #fff8fc; font-size: 12px; overflow-wrap: anywhere; }
+#love-audio-mute[aria-pressed="true"] { background: #f3dce8; }
+@media (max-width: 380px) { .love-audio-controls { gap: 10px; padding-inline: 11px; } #love-audio-mute { width: 44px; flex-shrink: 0; } #love-audio-mute [data-mute-label] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); } }
 #music-status { min-height: 31px; padding-top: 9px; color: #922447; font-size: 11px; line-height: 1.65; overflow-wrap: anywhere; }
 footer { margin-top: 23px; color: var(--muted); font-size: 11px; text-align: center; }
 footer > span { padding-left: 3px; color: var(--rose); }

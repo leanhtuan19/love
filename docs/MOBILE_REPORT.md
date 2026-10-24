@@ -55,11 +55,11 @@ Trước khi phát hành rộng, nên kiểm tra chuỗi mở popup → chạm �
 Đây là thay đổi frontend; không cần khởi tạo lại tài khoản, đổi mật khẩu, xóa dữ liệu hoặc chạy migration mới. Commit/push các file đã sửa từ máy tính lên nhánh đang triển khai. Sau đó vào Bash PythonAnywhere:
 
 ```bash
-cd /home/at19xyz/love
+cd /home/USERNAME/love
 git pull --ff-only origin main
 ```
 
-Vào **Web → Reload** cho `at19xyz.pythonanywhere.com`, rồi tải lại website bằng Ctrl + F5 hoặc làm mới cache trên điện thoại. Giữ nguyên WSGI, virtualenv, `LOVEDAYS_DATA_DIR` và hai static mapping `/main/`, `/fonts/` hiện có. File `mobile.js` mới được phục vụ qua `/main/`; không tạo mapping đến kho dữ liệu riêng.
+Thay `USERNAME` bằng tên tài khoản PythonAnywhere. Vào **Web → Reload** cho domain hiện có, rồi tải lại website bằng Ctrl + F5 hoặc làm mới cache trên điện thoại. Giữ nguyên WSGI, virtualenv, `LOVEDAYS_DATA_DIR` và hai static mapping `/main/`, `/fonts/` hiện có. File `mobile.js` mới được phục vụ qua `/main/`; không tạo mapping đến kho dữ liệu riêng.
 
 Nếu `git pull` báo xung đột hoặc thay đổi local, kiểm tra `git status` và giữ lại thay đổi để xử lý; không chạy reset/xóa dữ liệu để bỏ qua lỗi. Nếu giao diện còn dùng mã cũ, kiểm tra Network đã tải `/main/js/mobile.js` thành công và đã Reload Web app.
 

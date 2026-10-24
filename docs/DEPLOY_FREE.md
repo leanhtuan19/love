@@ -1,5 +1,7 @@
 # Triển khai miễn phí: GitHub + PythonAnywhere Beginner
 
+Bản ảnh/video, upload chia phần, bản đồ và Geoapify: làm theo [hướng dẫn media mới](MEDIA_MAPS_AUDIO.md) sau các bước cấu hình hosting.
+
 Nếu đang nâng cấp bản có sẵn lên phiên bản Nhật ký/Cài đặt/tự khóa, dùng [hướng dẫn nâng cấp có sao lưu và setup](UPGRADE_SETTINGS_JOURNAL.md) trước. Cài mới cũng cần chạy `setup-admins` để bật trang quản trị; không có thông tin đăng nhập mặc định trong source.
 
 Phương án này chạy giao diện và API Flask hiện có trên cùng một địa chỉ HTTPS. Thư vẫn lưu JSON, ảnh nằm trong kho riêng và SQLite quản lý xác thực. Không cần đổi framework, tạo database trả phí hoặc đặt dữ liệu riêng trong GitHub.

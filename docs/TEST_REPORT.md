@@ -1,5 +1,28 @@
 # Báo cáo kiểm thử
 
+## Nội dung, media, bản đồ và nhạc — 24/10/2026
+
+Đã chạy `python -m unittest discover -s tests -v`: **123 bài, 122 đạt, 1 bỏ qua**, 237,094 giây. Bài bỏ qua cần `os.fork` POSIX, không có trên Windows. Sau đó thêm kiểm tra video thư dừng khi sửa/khóa và bổ sung dừng video khi đóng popup: chạy lại hai nhóm trình duyệt liên quan **4/4 + 4/4 đạt**; riêng retry upload với MIME picker chung `application/octet-stream` cũng đạt. Hiện có **124 bài riêng biệt: 123 đạt, 1 bỏ qua**; không tuyên bố đã chạy một lượt nguyên bộ 124 bài sau bổ sung cuối.
+
+| Nhóm mới/cập nhật chính | Kết quả |
+| --- | --- |
+| `test_media_uploads.py` | 16/16 |
+| `test_location_service.py` | 8/8 |
+| `test_journal_media_browser.py` | 4/4 |
+| `test_reader_music_browser.py` | 4/4 |
+| `test_site_features.py` | 17/17 |
+| `test_backend.py` | 23/23 |
+
+Lượt toàn bộ còn gồm backup, fork mô phỏng, PythonAnywhere, static build, gesture, 7 bài mobile và các nhóm trình duyệt/hòm thư hiện có. `git diff --check` và biên dịch các module Python mới đạt. Avatar/font không thay đổi.
+
+Đã kiểm tra khung giữ xuống dòng/chuỗi dài và XSS hiển thị dạng chữ; tên tác giả riêng; cặp người gửi/nhận theo ID cả khi đổi tên và reset; backend từ chối cặp tự gửi. Chrome phát audio WAV thật qua server có Range, tua bằng bàn phím, tắt tiếng, tạm dừng/kết thúc và từ chối phát. Audio sản phẩm vẫn giữ nguồn nhạc cũ.
+
+Media: 8 tệp kết hợp, chọn bổ sung, ảnh gốc 6,7 MB so byte trùng khớp, video VP8 tổng hợp phát thật; tệp riêng không đọc được sau khóa. Retry ngắt request thứ hai tiếp tục từ 1 MiB; offset sau restart, hai request cùng offset, giữ tệp hoàn tất khi lưu lỗi/hết đĩa, lỗi SQLite đầy, crash giữa rename/commit và JSON/claim đều có kiểm tra. Có kiểm tra CLI dọn rác giữ tệp đã liên kết/lịch sử và upload gần đây. Sửa/xóa nhật ký vẫn yêu cầu mật khẩu mới tại từng thao tác; thêm video khi chỉ có mật khẩu nhật ký đã đạt. Kiểm tra container MP4/WebM theo luồng, không kiểm chứng mọi codec hoặc video cực lớn.
+
+Địa điểm: tọa độ `0,0`, Google/Apple URL giữ GPS gốc, địa chỉ 0–10 m/10–100 m/khu vực xa hơn, API lỗi/thiếu key/cache/rate qua restart, độ chính xác GPS riêng khoảng cách kết quả. Phản hồi chậm không ghi đè tên sửa tay hoặc GPS mới. Geoapify dùng provider giả lập; chưa có key thật. Chưa mở app bản đồ native, bàn phím hoặc trình duyệt trên iPhone/Android thật; chưa deploy/reload trên tài khoản PythonAnywhere hoặc kiểm tra quota thật. ResourceWarning MP3 bị Chrome hủy tải trước trong Werkzeug vẫn có thể xuất hiện, không phải lỗi JavaScript.
+
+Hướng dẫn biến môi trường, migration và cập nhật: [MEDIA_MAPS_AUDIO.md](MEDIA_MAPS_AUDIO.md).
+
 ## Mobile, bàn phím và popup — 23/10/2026
 
 Đã chạy **34 kiểm thử đạt** trong quá trình tích hợp bản sửa mobile: 7 bài mới trong `test_mobile_layout.py`, 7 `test_browser.py`, 5 `test_mailbox_ui.py`, 3 `test_features_browser.py`, 9 `test_gestures.py` và 3 `test_static_build.py`. Các nhóm chạy riêng; sau bản sửa phong thư và animation popup đã chạy lại hai bài liên quan (zoom và ma trận responsive), không tuyên bố chạy một lượt nguyên bộ sau mỗi thay đổi CSS.

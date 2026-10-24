@@ -1,5 +1,7 @@
 # Nâng cấp nhật ký, quản trị và tự khóa trên PythonAnywhere
 
+Ảnh/video, upload chia phần và Geoapify của phiên bản mới được hướng dẫn thêm trong [MEDIA_MAPS_AUDIO.md](MEDIA_MAPS_AUDIO.md).
+
 Thực hiện theo thứ tự sao lưu → cập nhật mã → cài dependency → migrate/setup → Reload → kiểm tra. Hướng dẫn dùng Bash của PythonAnywhere, virtualenv `lovedays` và repository tại `~/love`. Mã được sửa tại máy phát triển; chưa tự push hoặc thay website online.
 
 ## Dữ liệu và quyền
@@ -17,7 +19,7 @@ Từ PowerShell trên máy phát triển, sau khi rà soát thay đổi:
 ```powershell
 Set-Location "C:\Users\Admin\Downloads\lovedays-main"
 git status --short
-git add server.py site_features.py requirements.txt index.html main README.md docs scripts/backup_private.py tests
+git add server.py site_features.py media_uploads.py location_service.py requirements.txt index.html main README.md docs scripts/backup_private.py tests
 git diff --cached --stat
 git commit -m "Add journal, encrypted admin settings and mailbox expiry"
 git push origin main
@@ -106,7 +108,8 @@ WSGI tiếp tục import `application` từ `pythonanywhere_wsgi`. Giữ `LOVEDA
 | --- | --- |
 | `LOVEDAYS_COOKIE_SECURE` | `true` trên HTTPS; adapter đã đặt mặc định |
 | `LOVEDAYS_PUBLIC_ORIGIN` | Origin HTTPS thật, không có `/api` hoặc `/love`; adapter suy ra miền US, EU cần đặt đúng miền |
-| `LOVEDAYS_JOURNAL_MAX_BYTES` | Mặc định 134217728, tức 128 MiB tổng ảnh nhật ký, gồm ảnh lịch sử |
+| `LOVEDAYS_GEOAPIFY_API_KEY` | Key phía máy chủ để tra địa chỉ; không có key vẫn nhập địa điểm thủ công được |
+| `LOVEDAYS_JOURNAL_MAX_BYTES` | Biến cũ không còn áp quota trong phiên bản media mới |
 | `LOVEDAYS_PASSWORD_HASH` | Nếu từng đặt override, gỡ nó trước khi đổi mật khẩu hòm thư trong Cài đặt |
 
 Đổi các biến của Web app bằng cấu hình WSGI/môi trường riêng trên máy chủ trước import, rồi Reload. Không sửa khóa hạ tầng qua trang Cài đặt. Các giới hạn nghiệp vụ có thể sửa trong Cài đặt được lưu ở SQLite.
@@ -139,7 +142,7 @@ Không ánh xạ toàn repo, `/api`, kho riêng hoặc `journal-images`. Ảnh n
 - Đăng nhập cả hai quản trị viên; sửa một nhóm cài đặt không ghi đè nhóm khác; đổi thông tin đăng nhập rồi chạy lại setup để xác nhận không phục hồi tài khoản cũ.
 - Reload ứng dụng rồi kiểm tra thư, nhật ký, lịch sử, ảnh và cài đặt còn nguyên. Kiểm tra Error log chỉ với bản ghi mới sau lần Reload.
 
-Ảnh nhận JPEG/PNG/WebP, tối đa 5 ảnh/bài, 5 MiB/ảnh, tối đa 12 triệu pixel và mỗi cạnh 8000 px. Máy chủ giải mã và tạo lại ảnh, không tin phần mở rộng. Ảnh cũ vẫn giữ để lịch sử xem được và tính vào quota; giới hạn 128 MiB không phải toàn bộ quota tài khoản PythonAnywhere. Theo dõi Files, tải bản sao lưu về máy, và gia hạn Web app hàng tháng theo [hướng dẫn miễn phí](DEPLOY_FREE.md).
+Media nhận JPEG/PNG/WebP/MP4/WebM, giữ nguyên tệp gốc và tải chia phần. Ứng dụng không còn áp mức 5 tệp/5 MiB/quota 128 MiB; dung lượng thực tế phụ thuộc tài khoản hosting. Ảnh/video cũ vẫn giữ để lịch sử đọc được. Theo dõi Files, sao lưu và gia hạn Web app theo [hướng dẫn miễn phí](DEPLOY_FREE.md); chi tiết tại [hướng dẫn media](MEDIA_MAPS_AUDIO.md).
 
 ## Kiểm chứng và giới hạn
 

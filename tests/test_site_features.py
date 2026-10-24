@@ -14,7 +14,7 @@ from unittest import mock
 from PIL import Image
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from server import create_app, MAX_IMAGE_BYTES
+from server import create_app
 from site_features import setup_admins
 
 
@@ -75,6 +75,19 @@ class SiteFeaturesTests(unittest.TestCase):
         stream = io.BytesIO()
         Image.new("RGB", (24, 18), "pink").save(stream, "PNG")
         return stream.getvalue()
+
+    def complete_upload(self, client=None):
+        client = client or self.client
+        content = self.image()
+        response = client.post("/api/uploads", json={"scope": "journal", "name": "kỷ-niệm.png", "size": len(content), "mimeType": "image/png"}, headers=self.headers(client))
+        self.assertEqual(response.status_code, 201, response.get_json())
+        upload_id = response.get_json()["id"]
+        endpoint = "/api/uploads/" + upload_id
+        response = client.put(endpoint, data=content, content_type="application/octet-stream", headers={**self.headers(client), "Upload-Offset": "0"})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        response = client.post(endpoint + "/finish", json={}, headers=self.headers(client))
+        self.assertEqual(response.status_code, 200, response.get_json())
+        return upload_id
 
     def test_encrypted_usernames_hashes_and_public_endpoints_never_leak_credentials(self):
         with self.auth.connection() as db:
@@ -270,6 +283,7 @@ class SiteFeaturesTests(unittest.TestCase):
         with outsider.get(image["url"]) as public_image:
             self.assertEqual(public_image.status_code, 200)
             Image.open(io.BytesIO(public_image.data)).verify()
+            self.assertEqual(public_image.data, self.image(), "Stored attachments retain original bytes")
         edit = self.client.put("/api/journal/" + post["id"], json=self.payload(password=self.journal_password, keepImageIds=[]), headers=self.headers())
         self.assertEqual(edit.status_code, 200)
         self.assertEqual(outsider.get(image["url"]).status_code, 401)
@@ -282,11 +296,12 @@ class SiteFeaturesTests(unittest.TestCase):
         self.assertEqual(outsider.get(image["url"]).status_code, 401)
         self.assertEqual(outsider.get("/api/journal/history").status_code, 401)
         for uploads, expected in (([(io.BytesIO(b"<script>fake</script>"), "fake.png", "image/png")], 400),
-                                  ([(io.BytesIO(self.image()), "fake.jpg", "image/jpeg")], 400),
-                                  ([(io.BytesIO(b"x" * (MAX_IMAGE_BYTES + 1)), "large.png", "image/png")], 413),
-                                  ([(io.BytesIO(self.image()), "i.png", "image/png") for _ in range(6)], 400)):
+                                  ([(io.BytesIO(self.image()), "fake.jpg", "image/jpeg")], 400)):
             self.assertEqual(self.create(images=uploads).status_code, expected)
         self.assertEqual(len(list(self.store.images.iterdir())), 1)
+        many = self.create(images=[(io.BytesIO(self.image()), "i.png", "image/png") for _ in range(7)])
+        self.assertEqual(many.status_code, 201, many.get_json())
+        self.assertEqual(len(many.get_json()["post"]["images"]), 7)
 
     def test_failed_history_transaction_keeps_post_and_does_not_orphan_new_uploads(self):
         self.configure_journal()
@@ -304,17 +319,24 @@ class SiteFeaturesTests(unittest.TestCase):
         self.assertEqual(list(self.store.images.iterdir()), [])
         self.assertEqual(self.client.get("/api/journal/history").get_json()["total"], 0)
 
-    def test_location_validation_optional_manual_and_image_quota(self):
+    def test_location_validation_optional_manual_rich_metadata_and_no_business_quota(self):
         self.login()
-        for location in ({"label": "Tại nhà"}, {"label": ""}, {"label": "Vị trí", "latitude": 18, "longitude": 105}):
+        for location in ({"label": "Tại nhà"}, {"label": ""}, {"label": "Vị trí", "latitude": 0, "longitude": 0}):
             self.assertEqual(self.create(self.payload(location=location)).status_code, 201)
-        for location in ({"latitude": 18}, {"label": "", "latitude": 95, "longitude": 105}, {"label": "", "latitude": True, "longitude": 105}):
+        for location in ({"latitude": 18}, {"label": "", "latitude": 95, "longitude": 105}, {"label": "", "latitude": True, "longitude": 105},
+                         {"label": "", "latitude": 0, "longitude": 0, "accuracy": -1}):
             self.assertEqual(self.create(self.payload(location=location)).status_code, 400)
-        self.store.quota = 1
+        location = {"label": "Tên đã sửa thủ công", "latitude": 0, "longitude": 0, "accuracy": 27,
+                    "lookupAddress": "Địa chỉ tra cứu", "lookupDistanceMeters": 3, "source": "geoapify", "approximate": False}
+        response = self.create(self.payload(location=location))
+        saved = response.get_json()["post"]["location"]
+        for key, value in location.items():
+            self.assertEqual(saved[key], value)
+        self.assertIn("Geoapify", saved["attribution"])
+        # A legacy quota configuration no longer imposes an application limit.
+        self.app.config["JOURNAL_MAX_BYTES"] = 1
         response = self.create(images=[(io.BytesIO(self.image()), "sample.png", "image/png")])
-        self.assertEqual(response.status_code, 413)
-        self.assertEqual(response.get_json()["error"], "journal_quota")
-        self.assertEqual(list(self.store.images.iterdir()), [])
+        self.assertEqual(response.status_code, 201, response.get_json())
 
     def test_concurrent_creates_from_multiple_app_instances_and_restart_keep_all_data(self):
         apps = [self.app, create_app(self.config)]
@@ -328,6 +350,64 @@ class SiteFeaturesTests(unittest.TestCase):
         posts = client.get("/api/journal?pageSize=30").get_json()["posts"]
         self.assertEqual(len(posts), 8)
         self.assertEqual(len({post["id"] for post in posts}), 8)
+
+    def test_completed_upload_claim_and_public_range_follow_history_permissions(self):
+        self.configure_journal()
+        upload_id = self.complete_upload()
+        outsider = self.app.test_client()
+        response = self.create(self.payload(uploadIds=[upload_id]))
+        self.assertEqual(response.status_code, 201, response.get_json())
+        post = response.get_json()["post"]
+        image = post["images"][0]
+        self.assertEqual(image["id"], upload_id)
+        self.assertEqual(image["kind"], "image")
+        self.assertNotIn("storageArea", image)
+        with outsider.get(image["url"], headers={"Range": "bytes=2-5"}) as ranged:
+            self.assertEqual(ranged.status_code, 206)
+            self.assertEqual(ranged.data, self.image()[2:6])
+        self.assertEqual(self.create(self.payload(uploadIds=[upload_id])).status_code, 409)
+        edit = self.client.put("/api/journal/" + post["id"], json=self.payload(password=self.journal_password, keepImageIds=[]), headers=self.headers())
+        self.assertEqual(edit.status_code, 200, edit.get_json())
+        self.assertEqual(outsider.get(image["url"]).status_code, 401)
+        with self.client.get(image["url"]) as historic:
+            self.assertEqual(historic.status_code, 200)
+
+    def test_failed_history_save_preserves_completed_upload_for_retry(self):
+        self.configure_journal()
+        post = self.create().get_json()["post"]
+        upload_id = self.complete_upload()
+        with self.auth.connection() as db:
+            db.execute("CREATE TRIGGER reject_history BEFORE INSERT ON journal_history BEGIN SELECT RAISE(ABORT,'simulated transaction failure'); END")
+        payload = self.payload(password=self.journal_password, uploadIds=[upload_id], title="Thử lại")
+        with self.assertLogs(self.app.logger, level="ERROR"):
+            failed = self.client.put("/api/journal/" + post["id"], json=payload, headers=self.headers())
+        self.assertEqual(failed.status_code, 500)
+        self.assertEqual(self.client.get("/api/uploads/" + upload_id).get_json()["state"], "complete")
+        self.assertEqual(self.client.get("/api/journal/" + post["id"]).get_json()["post"], post)
+        with self.auth.connection() as db:
+            db.execute("DROP TRIGGER reject_history")
+        saved = self.client.put("/api/journal/" + post["id"], json=payload, headers=self.headers())
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        self.assertEqual(saved.get_json()["post"]["images"][0]["id"], upload_id)
+        self.assertEqual(self.client.get("/api/uploads/" + upload_id).get_json()["state"], "claimed")
+
+    def test_verified_journal_editor_can_stage_media_but_final_save_rechecks_password(self):
+        self.configure_journal()
+        post = self.create().get_json()["post"]
+        editor = self.app.test_client()
+        rejected = editor.post("/api/uploads", json={"scope": "journal", "name": "photo.png", "size": 10, "mimeType": "image/png"}, headers=self.headers(editor))
+        self.assertEqual(rejected.status_code, 401)
+        grant = editor.post("/api/journal/history/unlock", json={"password": self.journal_password}, headers=self.headers(editor))
+        self.assertEqual(grant.status_code, 200)
+        upload_id = self.complete_upload(editor)
+        endpoint = "/api/journal/" + post["id"]
+        no_password = editor.put(endpoint, json=self.payload(uploadIds=[upload_id]), headers=self.headers(editor))
+        self.assertEqual(no_password.status_code, 401)
+        saved = editor.put(endpoint, json=self.payload(uploadIds=[upload_id], password=self.journal_password), headers=self.headers(editor))
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        self.assertEqual(saved.get_json()["post"]["images"][0]["id"], upload_id)
+        self.clock[0] += 301
+        self.assertEqual(editor.get("/api/uploads/" + upload_id).status_code, 401)
 
 
 if __name__ == "__main__":

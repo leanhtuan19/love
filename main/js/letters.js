@@ -3,8 +3,7 @@
 
   // Thời gian là khoảng cách tối đa GIỮA hai lần nhấn, không phải cả chuỗi.
   const SECRET_CONFIG = Object.freeze({
-    clicks: 10, maxGapMs: 1200, maxPressMs: 500, maxMovementPx: 12,
-    maxImages: 5, maxImageBytes: 5 * 1024 * 1024
+    clicks: 10, maxGapMs: 1200, maxPressMs: 500, maxMovementPx: 12
   });
   const LETTER_TYPES = Object.freeze({ diary: 'Nhật ký', 'love-letter': 'Thư tình', message: 'Lời nhắn' });
   const DEFAULT_PEOPLE = [{ id: 'tuan', name: 'Lê Anh Tuấn' }, { id: 'thu', name: 'Lê Phạm Anh Thư' }];
@@ -41,13 +40,14 @@
                 <h3 id="secret-compose-title">Viết một lá thư</h3>
                 <form id="secret-compose-form">
                   <fieldset id="secret-compose-fields" class="secret-compose-fields">
-                    <div class="secret-form-grid"><label>Người viết<select id="secret-sender" required></select></label><label>Người nhận<select id="secret-recipient" required></select></label></div>
+                    <div class="secret-form-grid"><label>Người viết<select id="secret-sender" required></select></label><label>Người nhận<select id="secret-recipient" required disabled aria-describedby="secret-recipient-hint"></select></label></div>
+                    <p id="secret-recipient-hint" class="secret-field-hint">Lá thư tự động gửi đến người còn lại.</p>
                     <label>Tên người viết<input id="secret-sender-name" name="senderName" required maxlength="80" autocomplete="off"></label>
                     <label>Loại thư<select id="secret-type" required><option value="diary">Nhật ký</option><option value="love-letter">Thư tình</option><option value="message">Lời nhắn</option></select></label>
                     <label>Tiêu đề<input id="secret-title" name="title" required maxlength="160" placeholder="Một điều muốn gửi đến bạn…" autocomplete="off"></label>
                     <label>Nội dung<textarea id="secret-content" name="content" rows="9" required maxlength="20000" placeholder="Viết từ những điều thật lòng…"></textarea></label>
                     <p id="secret-content-count" class="secret-field-hint"></p>
-                    <label class="secret-upload-label" for="secret-images"><span aria-hidden="true">＋</span> Thêm ảnh đính kèm<input id="secret-images" type="file" accept="image/jpeg,image/png,image/webp" multiple></label>
+                    <label class="secret-upload-label" for="secret-images"><span aria-hidden="true">＋</span> Thêm ảnh / video<input id="secret-images" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm" multiple></label>
                     <p id="secret-image-hint" class="secret-field-hint"></p><div id="secret-previews" class="secret-previews"></div>
                   </fieldset>
                   <div id="secret-conflict" class="secret-conflict" hidden><p>Lá thư đã được sửa ở nơi khác. Bản nháp của bạn vẫn được giữ. Đọc bản mới trước khi chọn dùng nội dung nháp.</p><div><button id="secret-conflict-review" class="secret-text-button" type="button">Đọc phiên bản mới</button><button id="secret-conflict-apply" class="secret-text-button" type="button" disabled>Dùng nháp trên bản mới</button></div></div>
@@ -99,8 +99,6 @@
     let controller = null;
     let lockTimer = null;
     let toastTimer = null;
-    let imageKey = 0;
-    let previewUrls = [];
     let lightboxTrigger = null;
     let activeTrigger = null;
     let sessionTimer = null;
@@ -204,12 +202,12 @@
     }
 
     function revokePreviews() {
-      previewUrls.forEach((url) => URL.revokeObjectURL(url));
-      previewUrls = [];
-      state.draft?.files.forEach((entry) => { entry.url = null; });
+      state.draft?.queue?.detach();
     }
 
     function clearPrivateDOM() {
+      revokePreviews();
+      reader.querySelectorAll('video').forEach((video) => { video.pause(); video.removeAttribute('src'); video.load(); });
       if (lightbox.open) lightbox.close();
       lightboxImage.removeAttribute('src');
       lightboxStatus.textContent = '';
@@ -251,14 +249,14 @@
       if (Array.isArray(data.people) && data.people.length) state.people = data.people.filter((person) => typeof person.id === 'string' && typeof person.name === 'string');
       if (!state.people.length) state.people = DEFAULT_PEOPLE;
       const limits = data.limits || {};
-      ['maxImages', 'maxImageBytes', 'maxTitleLength', 'maxContentLength', 'maxNameLength'].forEach((key) => {
+      ['maxTitleLength', 'maxContentLength', 'maxNameLength'].forEach((key) => {
         if (Number.isFinite(limits[key]) && limits[key] > 0) state.limits[key] = limits[key];
       });
       state.lockUntil = Number(data.retryAfter) > 0 ? Date.now() + Number(data.retryAfter) * 1000 : 0;
       title.maxLength = state.limits.maxTitleLength;
       content.maxLength = state.limits.maxContentLength;
       senderName.maxLength = state.limits.maxNameLength;
-      byId('image-hint').textContent = `Tối đa ${state.limits.maxImages} ảnh JPEG, PNG hoặc WebP; mỗi ảnh tối đa ${Math.round(state.limits.maxImageBytes / 1048576)} MB.`;
+      byId('image-hint').textContent = 'JPEG, PNG, WebP, MP4 hoặc WebM. Tải từng phần, có thể thử lại; dung lượng còn lại phụ thuộc hosting.';
       scheduleSessionExpiry(data);
     }
 
@@ -616,6 +614,7 @@
 
     function fillPeople() {
       const previousFilter = filter.value;
+      const previousSender = state.draft?.senderId || sender.value;
       filter.replaceChildren(new Option('Tất cả', ''));
       sender.replaceChildren();
       recipient.replaceChildren();
@@ -625,6 +624,19 @@
         recipient.append(new Option(person.name, person.id));
       });
       filter.value = state.people.some((person) => person.id === previousFilter) ? previousFilter : '';
+      if (state.people.some((person) => person.id === previousSender)) sender.value = previousSender;
+      syncRecipient();
+    }
+
+    function syncRecipient(updateSenderName = false) {
+      const other = state.people.find((person) => person.id !== sender.value);
+      recipient.value = other?.id || '';
+      recipient.disabled = true;
+      if (state.draft && state.view === 'compose') {
+        state.draft.senderId = sender.value;
+        state.draft.recipientId = recipient.value;
+        if (updateSenderName) { senderName.value = personName(sender.value); state.draft.senderName = senderName.value; }
+      }
     }
 
     async function enterWorkspace(token) {
@@ -685,7 +697,7 @@
         const row = button('', 'secret-letter-row', () => { if (!mutationBusy()) openLetter(letter.id); });
         row.dataset.letterId = letter.id;
         row.setAttribute('aria-pressed', String(state.selected?.id === letter.id));
-        if (Array.isArray(letter.images) && letter.images[0]) {
+        if (Array.isArray(letter.images) && letter.images[0] && !String(letter.images[0].mimeType).startsWith('video/')) {
           const cover = element('img', 'secret-letter-cover');
           cover.loading = 'lazy';
           cover.alt = '';
@@ -705,6 +717,7 @@
     }
 
     function renderEmpty() {
+      reader.querySelectorAll('video').forEach((video) => video.pause());
       state.view = 'read';
       reader.hidden = false;
       compose.hidden = true;
@@ -730,6 +743,7 @@
     }
 
     function renderDetail(letter) {
+      reader.querySelectorAll('video').forEach((video) => video.pause());
       state.selected = letter;
       state.view = 'read';
       compose.hidden = true;
@@ -754,6 +768,18 @@
       if (Array.isArray(letter.images) && letter.images.length) {
         const gallery = element('div', 'secret-gallery');
         letter.images.forEach((image, index) => {
+          if (String(image.mimeType).startsWith('video/')) {
+            const wrapper = element('figure', 'secret-video-item');
+            const video = element('video');
+            video.controls = true; video.playsInline = true; video.preload = 'none';
+            video.src = imageUrl(image);
+            video.setAttribute('aria-label', image.alt || image.originalName || `Video đính kèm ${index + 1}`);
+            const feedback = element('figcaption', '', image.originalName || 'Video đính kèm');
+            const download = element('a', 'secret-video-download', 'Tải video gốc');
+            download.href = imageUrl(image); download.download = image.originalName || 'video'; download.hidden = true;
+            video.addEventListener('error', () => { feedback.textContent = 'Không phát được video. Trình duyệt có thể chưa hỗ trợ codec của tệp này.'; download.hidden = false; });
+            wrapper.append(video, feedback, download); gallery.append(wrapper); return;
+          }
           const item = button('', 'secret-gallery-item', () => openLightbox(image, item));
           item.setAttribute('aria-label', `Xem ảnh ${index + 1}: ${image.alt || image.originalName || 'Ảnh đính kèm'}`);
           const img = element('img');
@@ -843,7 +869,6 @@
         title: letter?.title || '',
         content: letter?.content || '',
         keepImages: Array.isArray(letter?.images) ? [...letter.images] : [],
-        files: [],
         dirty: false
       };
       showCompose();
@@ -853,6 +878,7 @@
     function showCompose() {
       const draft = state.draft;
       if (!draft) return;
+      reader.querySelectorAll('video').forEach((video) => video.pause());
       detailGeneration += 1;
       state.view = 'compose';
       compose.hidden = false;
@@ -860,6 +886,7 @@
       sender.value = draft.senderId;
       senderName.value = draft.senderName;
       recipient.value = draft.recipientId;
+      syncRecipient();
       type.value = draft.type;
       title.value = draft.title;
       content.value = draft.content;
@@ -889,34 +916,45 @@
     [sender, recipient, type].forEach((input) => input.addEventListener('change', () => {
       if (!state.draft || state.saving) return;
       state.draft.senderId = sender.value;
-      state.draft.recipientId = recipient.value;
+      syncRecipient(input === sender);
       state.draft.type = type.value;
-      if (input === sender) { senderName.value = personName(sender.value); state.draft.senderName = senderName.value; }
       state.draft.dirty = true;
     }));
+
+    composeForm.addEventListener('reset', () => {
+      queueMicrotask(() => {
+        syncRecipient(true);
+        if (state.draft && state.view === 'compose' && !compose.hidden) {
+          state.draft.title = title.value; state.draft.content = content.value; state.draft.type = type.value;
+          state.draft.dirty = true; updateContentCount();
+        }
+      });
+    });
+
+    function uploadQueue(draft) {
+      if (!draft.queue) draft.queue = new window.LoveDaysMedia.Queue({ scope: 'letters', onChange: () => {
+        if (state.draft === draft) draft.dirty = true;
+      } });
+      return draft.queue;
+    }
 
     function renderPreviews() {
       previews.replaceChildren();
       const draft = state.draft;
       if (!draft) return;
       const entries = [
-        ...draft.keepImages.map((image) => ({ key: image.id, name: image.originalName || 'Ảnh đính kèm', url: imageUrl(image), retained: true })),
-        ...draft.files.map((entry) => { if (!entry.url) { entry.url = URL.createObjectURL(entry.file); previewUrls.push(entry.url); } return { key: entry.key, name: entry.file.name, url: entry.url, retained: false }; })
+        ...draft.keepImages.map((image) => ({ key: image.id, name: image.originalName || 'Tệp đính kèm', url: imageUrl(image), video: String(image.mimeType).startsWith('video/'), retained: true }))
       ];
       entries.forEach((entry) => {
         const item = element('figure', 'secret-preview');
-        const img = element('img');
+        const img = element(entry.video ? 'video' : 'img');
         img.alt = entry.name;
+        if (entry.video) { img.controls = true; img.playsInline = true; img.preload = 'none'; }
         img.src = entry.url;
         img.addEventListener('error', () => { img.hidden = true; item.prepend(element('span', 'secret-image-error', 'Không xem được ảnh')); }, { once: true });
         const remove = button('×', 'secret-preview-remove', () => {
           if (state.saving) return;
-          if (entry.retained) draft.keepImages = draft.keepImages.filter((image) => image.id !== entry.key);
-          else {
-            const removed = draft.files.find((file) => file.key === entry.key);
-            if (removed?.url) { URL.revokeObjectURL(removed.url); previewUrls = previewUrls.filter((url) => url !== removed.url); }
-            draft.files = draft.files.filter((file) => file.key !== entry.key);
-          }
+          draft.keepImages = draft.keepImages.filter((image) => image.id !== entry.key);
           draft.dirty = true;
           renderPreviews();
         });
@@ -924,28 +962,24 @@
         item.append(img, element('figcaption', '', entry.name), remove);
         previews.append(item);
       });
+      const queue = element('div', 'secret-upload-queue');
+      previews.append(queue);
+      uploadQueue(draft).render(queue);
     }
 
     images.addEventListener('change', () => {
       if (!state.draft || state.saving) return;
       const draft = state.draft;
-      const errors = [];
-      let added = 0;
-      Array.from(images.files || []).forEach((file) => {
-        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { errors.push(`${file.name}: chỉ nhận JPEG, PNG hoặc WebP.`); return; }
-        if (!file.size || file.size > state.limits.maxImageBytes) { errors.push(`${file.name}: ảnh phải lớn hơn 0 byte và tối đa ${Math.round(state.limits.maxImageBytes / 1048576)} MB.`); return; }
-        if (draft.keepImages.length + draft.files.length >= state.limits.maxImages) { errors.push(`Mỗi thư chỉ đính kèm tối đa ${state.limits.maxImages} ảnh.`); return; }
-        draft.files.push({ key: `upload-${++imageKey}`, file });
-        added += 1;
-      });
+      const errors = uploadQueue(draft).addFiles(images.files || []);
       images.value = '';
-      if (added) draft.dirty = true;
+      draft.dirty = true;
       renderPreviews();
-      announce([...new Set(errors)].join(' ') || `Đã thêm ${added} ảnh vào bản nháp.`, errors.length > 0);
+      announce(errors.length ? errors.join(' ') : 'Đã thêm tệp vào hàng đợi. Bạn có thể chọn thêm hoặc bỏ từng tệp trước khi gửi.', errors.length > 0);
     });
 
-    function clearDraft() {
+    function clearDraft(discardUploads = true) {
       revokePreviews();
+      state.draft?.queue?.dispose({ discard: discardUploads });
       state.draft = null;
       state.conflictLatest = null;
       byId('conflict').hidden = true;
@@ -978,6 +1012,7 @@
     });
 
     function setBusy(busy) {
+      state.draft?.queue?.setDisabled(busy);
       fields.disabled = busy;
       saveButton.disabled = busy;
       byId('discard').disabled = busy;
@@ -1000,20 +1035,19 @@
       const token = generation;
       const payload = { senderId: draft.senderId, senderName: draft.senderName.trim(), recipientId: draft.recipientId, recipientName: personName(draft.recipientId), type: draft.type, title: draft.title.trim(), content: draft.content, keepImageIds: draft.keepImages.map((image) => image.id) };
       if (draft.updatedAt) payload.expectedUpdatedAt = draft.updatedAt;
-      const form = new FormData();
-      form.append('payload', JSON.stringify(payload));
-      draft.files.forEach((entry) => form.append('images', entry.file, entry.file.name));
       state.saving = true;
       setBusy(true);
       announce('Đang giữ lại những điều bạn vừa viết…');
       try {
-        const data = await request(draft.id ? `/api/letters/${encodeURIComponent(draft.id)}` : '/api/letters', { method: draft.id ? 'PUT' : 'POST', body: form });
+        payload.uploadIds = await uploadQueue(draft).uploadAll();
+        if (!alive(token) || !state.authenticated) return;
+        const data = await request(draft.id ? `/api/letters/${encodeURIComponent(draft.id)}` : '/api/letters', { method: draft.id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
         if (!alive(token) || !state.authenticated) return;
         if (!data.letter) throw new Error('Máy chủ chưa trả lại lá thư. Bản nháp vẫn được giữ.');
         state.letters = state.letters.filter((letter) => letter.id !== data.letter.id);
         state.letters.unshift(data.letter);
         sortLetters();
-        clearDraft();
+        clearDraft(false);
         renderDetail(data.letter);
         announce(draft.id ? 'Đã lưu những thay đổi trong lá thư.' : 'Lá thư đã được gửi và lưu lại.');
       } catch (error) { await handlePrivateError(error, token); }
